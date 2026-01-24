@@ -14,7 +14,7 @@ const sendEmail = require("../utils/sendEmail");
 /* ===================== Helpers ===================== */
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000;
-const SALT_ROUNDS = 12;
+const SALT_ROUNDS = process.env.HASH_PASS ;
 
 const generateOtp = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
@@ -26,7 +26,7 @@ const createAuthToken = (user) =>
   jwt.sign(
     { userId: user._id, role: user.role },
     process.env.JWT_SECRET_KEY,
-    { expiresIn: "7d" }
+    { expiresIn: process.env.JWT_EXPIRE_TIME }
   );
 
 const createTempToken = (email, type) =>
