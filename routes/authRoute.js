@@ -1,57 +1,117 @@
 const express = require("express");
-const {
-    signup,
-    verifyEmailUser,
-    login,
-    forgetPassword,
-    verifyForgotPasswordCode,
-    resetPassword,
-    updateFcmToken,
-    changePassword
-} = require("../services/authService");
-
-const {
-    signupValidator,
-    loginValidator,
-    verifyEmailValidator,
-    forgetPasswordValidator,
-    verifyResetCodeValidator,
-    resetPasswordValidator,
-    changePasswordValidator
-} = require("../utils/validators/authValidator");
-
-const { protect, allowedTo } = require("../middleware/authMiddleware");
-
-
-const {uploadImageAndFile, attachUploadedLinks} = require("../middleware/uploadFileMiddleware");
 const router = express.Router();
 
-// ================= AUTH =================
+const authController = require("../services/authService");
 
-// 📌 Signup (send verification email)
-router.post("/signup" ,uploadImageAndFile,attachUploadedLinks, signupValidator, signup);
+// Validation
+const authValidation = require("..//utils/validators/authValidator");
 
-// 📌 Verify email (create account after code)
-router.post("/verifyEmailUser", verifyEmailValidator, verifyEmailUser);
+// Auth & Authorization
+const { protect, allowedTo } = require("../middleware/authMiddleware");
 
-// 📌 Login
-router.post("/login",loginValidator, login);
+/* =====================================================
+   AUTH – SIGNUP FLOW
+===================================================== */
 
-// ================= PASSWORD RESET =================
+/**
+ * STEP 1 – Request signup (send email OTP)
+ * POST /auth/signup/request
+ */
+router.post(
+  "/signup/request",
+  authValidation.signupRequestValidation,
+  authController.signupRequest
+);
 
-// 📌 Send reset code
-router.post("/forgetPassword",forgetPasswordValidator, forgetPassword);
+/**
+ * STEP 2 – Verify signup OTP
+ * POST /auth/signup/verify
+ */
+router.post(
+  "/signup/verify",
+  authValidation.verifyOtpValidation,
+  authController.verifySignupOtp
+);
 
-// 📌 Verify reset code
-router.post("/verifyForgotPasswordCode",verifyResetCodeValidator, verifyForgotPasswordCode);
+/**
+ * STEP 3 – Complete signup (create user + profile)
+ * POST /auth/signup/complete
+ * Header: Authorization: Bearer signupToken
+ */
+router.post(
+  "/signup/complete",
+  authValidation.completeSignupValidation,
+  authController.completeSignup
+);
 
-// 📌 Reset password
-router.post("/resetPassword",resetPasswordValidator, resetPassword);
-// ================= UPDATE FCM TOKEN =================
+/* =====================================================
+   AUTH – LOGIN
+===================================================== */
 
-router.post("/updateFcmToken",protect, updateFcmToken);
+/**
+ * POST /auth/login
+ */
+router.post(
+  "/login",
+  authValidation.loginValidation,
+  authController.login
+);
 
-// ================= CHANGE PASSWORD =================
-router.put("/changePassword",protect, changePasswordValidator, changePassword);
+/* =====================================================
+   AUTH – FORGOT / RESET PASSWORD
+===================================================== */
+
+/**
+ * STEP 1 – Request password reset
+ * POST /auth/password/forgot
+ */
+router.post(
+  "/password/forgot",
+  authValidation.forgotPasswordValidation,
+  authController.forgotPassword
+);
+
+/**
+ * STEP 2 – Verify reset OTP
+ * POST /auth/password/verify
+ */
+router.post(
+  "/password/verify",
+  authValidation.verifyOtpValidation,
+  authController.verifyResetOtp
+);
+
+/**
+ * STEP 3 – Reset password
+ * POST /auth/password/reset
+ * Header: Authorization: Bearer resetToken
+ */
+router.post(
+  "/password/reset",
+  authValidation.resetPasswordValidation,
+  authController.resetPassword
+);
+
+/* =====================================================
+   AUTH – PROTECTED USER ACTIONS
+===================================================== */
+
+/**
+ * Change password (logged-in user)
+ * PUT /auth/change-password
+ */
+router.put(
+  "/change-password",
+  protect,
+  authValidation.resetPasswordValidation,
+  authController.changePassword
+);
+
+router.get(
+  "/me",
+  protect,
+  authController.getLoggedInUser
+);
+
 
 module.exports = router;

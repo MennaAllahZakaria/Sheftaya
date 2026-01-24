@@ -1,383 +1,294 @@
+const crypto = require("crypto");
 const bcrypt = require("bcrypt");
 const asyncHandler = require("express-async-handler");
+const jwt = require("jsonwebtoken");
 
 const User = require("../models/userModel");
+const WorkerProfile = require("../models/workerProfileModel");
+const EmployerProfile = require("../models/employerProfileModel");
 const Verification = require("../models/verificationModel");
-const sendEmail = require("../utils/sendEmail");
+
 const ApiError = require("../utils/apiError");
-const createToken = require("../utils/createToken"); // JWT
-const { encryptToken } = require("../utils/fcmToken");
+const sendEmail = require("../utils/sendEmail");
 
-// ==================== Helpers ====================
+/* ===================== Helpers ===================== */
 
-// Get bcrypt salt rounds from env or fallback
-const getSaltRounds = () => {
-  return parseInt(process.env.HASH_PASS, 10) || 12;
-};
+const OTP_EXPIRY_MS = 10 * 60 * 1000;
+const SALT_ROUNDS = 12;
 
-// Simple 6-digit verification code generator
-const generateSixDigitCode = () =>
+const generateOtp = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
-// Basic FCM token validation (not too strict)
-function isValidFcmToken(token) {
-  // Firebase tokens are long (+80 chars) and use these chars
-  const fcmTokenRegex = /^[a-zA-Z0-9:_\-\.]{50,}$/;
-  return fcmTokenRegex.test(token);
-}
+const hashOtp = (otp) =>
+  crypto.createHash("sha256").update(otp).digest("hex");
 
-// ==================== SIGNUP ====================
-// @route   POST /auth/signup
-// @access  Public
-exports.signup = asyncHandler(async (req, res, next) => {
-  const { email, role, password } = req.body;
+const createAuthToken = (user) =>
+  jwt.sign(
+    { userId: user._id, role: user.role },
+    process.env.JWT_SECRET_KEY,
+    { expiresIn: "7d" }
+  );
+
+const createTempToken = (email, type) =>
+  jwt.sign(
+    { email, type },
+    process.env.JWT_SECRET_KEY,
+    { expiresIn: "10m" }
+  );
+
+/* =================================================== */
+/* ===================== SIGNUP ====================== */
+/* =================================================== */
+
+/**
+ * POST /auth/signup/request
+ */
+exports.signupRequest = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
 
   if (!email || !password) {
-    return next(new ApiError("Email and password are required", 400));
+    throw new ApiError("Email and password are required", 400);
   }
 
-  // Block direct admin signup
-  if (role === "admin") {
-    return next(new ApiError("You cannot register as admin", 400));
+  if (password.length < 8) {
+    throw new ApiError("Password must be at least 8 characters", 400);
   }
 
-  // Check if user already exists
-  const existingUser = await User.findOne({ email });
-  if (existingUser) {
-    return next(new ApiError("Email is already registered", 400));
-  }
-
-  // Prepare teacherProfile & imageProfile from upload middleware
-  req.body.teacherProfile = req.body.teacherProfile || {};
-  req.body.imageProfile = req.body.imageProfile || "";
-
-  if (role === "teacher" && req.files?.certificate) {
-    req.body.teacherProfile.certificate = req.certificateUrl;
-  }
-
-  if (req.files?.imageProfile) {
-    req.body.imageProfile = req.imageProfileUrl;
-  }
-
-  // Remove any previous verification attempts for this email
   await Verification.deleteMany({ email, type: "emailVerification" });
 
-  // Generate verification code
-  const verificationCode = generateSixDigitCode();
-  const expirationTime = Date.now() + 10 * 60 * 1000; // 10 minutes
+  const otp = generateOtp();
+  const hashedOtp = hashOtp(otp);
 
-  const hashedCode = await bcrypt.hash(verificationCode, 12);
+  await Verification.create({
+    email,
+    code: hashedOtp,
+    type: "emailVerification",
+    expiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
+  });
 
-  const message = `
-                    Hi ${req.body.firstName || ""} ${req.body.lastName || ""},
-                    Your verification code is:
-                    ${verificationCode}
-                    (valid for 10 minutes)
-                    `;
+  await sendEmail({
+    Email: email,
+    subject: "Verify your email",
+    message: `Your verification code is ${otp}. It expires in 10 minutes.`,
+  });
 
-  try {
-    // Send verification email
-    await sendEmail({
-      Email: email,
-      subject: "Email Verification Code",
-      message,
-    });
-
-    // Prepare temp user data (without plain password)
-    const { password, ...userData } = req.body;
-    if (password) {
-      const saltRounds = getSaltRounds();
-      userData.password = await bcrypt.hash(password, saltRounds);
-    }
-
-    // Store verification with temp user data
-    await Verification.create({
-      email,
-      code: hashedCode,
-      expiresAt: new Date(expirationTime),
-      type: "emailVerification",
-      tempUserData: userData,
-    });
-
-    res.status(200).json({
-      status: "success",
-      message: "Verification code sent to your email.",
-    });
-  } catch (err) {
-    console.error("Error sending signup verification email:", err.message);
-    return next(new ApiError("Error sending email", 500));
-  }
+  res.status(200).json({
+    status: "success",
+    message: "If the email is valid, a verification code was sent.",
+  });
 });
 
-// ==================== VERIFY EMAIL ====================
-// @route   POST /auth/verify-email
-// @access  Public
-exports.verifyEmailUser = asyncHandler(async (req, res, next) => {
+/**
+ * POST /auth/signup/verify
+ */
+exports.verifySignupOtp = asyncHandler(async (req, res) => {
   const { email, code } = req.body;
-
-  if (!email || !code) {
-    return next(new ApiError("Email and code are required", 400));
-  }
 
   const verification = await Verification.findOne({
     email,
     type: "emailVerification",
-  });
+  }).select("+code");
 
-  if (!verification) {
-    return next(new ApiError("No verification request found", 400));
+  if (!verification || verification.expiresAt < Date.now()) {
+    throw new ApiError("Invalid or expired code", 400);
   }
 
-  if (verification.expiresAt < Date.now()) {
-    await Verification.deleteOne({ _id: verification._id });
-    return next(new ApiError("Code expired", 400));
+  const isValid = hashOtp(code) === verification.code;
+  if (!isValid) {
+    throw new ApiError("Invalid verification code", 400);
   }
 
-  const isMatch = await bcrypt.compare(code, verification.code);
-  if (!isMatch) {
-    return next(new ApiError("Invalid code", 400));
-  }
+  const signupToken = createTempToken(email, "signup");
 
-  // Create real user from tempUserData
-  let user;
-  try {
-    user = await User.create(verification.tempUserData);
-  } catch (err) {
-    console.error("Error creating user during email verification:", err.message);
-    // Clean up verification to avoid stuck records
-    await Verification.deleteOne({ _id: verification._id });
-    return next(
-      new ApiError("Failed to create user. Please try signup again.", 500)
-    );
-  }
-
-  // Delete verification after success
-  await Verification.deleteOne({ _id: verification._id });
-
-  // If teacher: do NOT login immediately, just mark as pending (schema default)
-  if (user.role === "teacher") {
-    // teacherProfile.verificationStatus should already be 'pending' by default
-
-    // Try to notify teacher by email (do not fail flow if email sending fails)
-    try {
-      const message = `
-            Hi ${user.firstName} ${user.lastName},
-            Your account has been created and is pending approval. You will be notified once it is reviewed.
-            `;
-      await sendEmail({
-        Email: user.email,
-        subject: "Account Created - Pending Approval",
-        message,
-      });
-    } catch (err) {
-      console.error("Error sending teacher pending approval email:", err.message);
-    }
-
-    return res.status(201).json({
-      status: "success",
-      message: "Email verified successfully. Your account is pending approval.",
-    });
-  }
-
-  // For students: login directly
-  const token = createToken(user._id);
-
-  res.status(201).json({
+  res.status(200).json({
     status: "success",
-    message: "Email verified successfully",
-    token,
-    user,
+    signupToken,
   });
 });
 
-// ==================== LOGIN ====================
-// @route   POST /auth/login
-// @access  Public
-exports.login = asyncHandler(async (req, res, next) => {
+/**
+ * POST /auth/signup/complete
+ */
+exports.completeSignup = asyncHandler(async (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) throw new ApiError("Unauthorized", 401);
+
+  const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
+  if (decoded.type !== "signup") {
+    throw new ApiError("Invalid token", 401);
+  }
+
+  const {
+    firstName,
+    lastName,
+    password,
+    role,
+    city,
+    workerProfile,
+    employerProfile,
+  } = req.body;
+
+
+  const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
+
+  const user = await User.create({
+    firstName,
+    lastName,
+    email: decoded.email,
+    password: hashedPassword,
+    role,
+    city,
+  });
+
+  if (role === "worker") {
+    await WorkerProfile.create({
+      userId: user._id,
+      ...workerProfile,
+    });
+  }
+
+  if (role === "employer") {
+    await EmployerProfile.create({
+      userId: user._id,
+      ...employerProfile,
+    });
+  }
+
+  await Verification.deleteMany({ email: decoded.email });
+
+  const authToken = createAuthToken(user);
+
+  res.status(201).json({
+    status: "success",
+    token: authToken,
+    user: {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+      city: user.city,
+    },
+  });
+});
+
+/* =================================================== */
+/* ===================== LOGIN ======================= */
+/* =================================================== */
+
+exports.login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  if (!email || !password) {
-    return next(new ApiError("Email and password are required", 400));
-  }
-
-  const user = await User.findOne({ email });
+  const user = await User.findOne({ email }).select("+password");
   if (!user) {
-    return next(new ApiError("Incorrect email or password", 401));
-  }
-
-  // Optional: block banned/inactive users
-  if (user.status === "banned") {
-    return next(new ApiError("Your account has been banned", 403));
-  }
-  if (user.status === "inactive") {
-    return next(new ApiError("Your account is inactive", 403));
-  }
-
-  // Teacher must be approved
-  if (user.role === "teacher") {
-    const verificationStatus = user.teacherProfile?.verificationStatus;
-    if (verificationStatus !== "approved") {
-      return next(new ApiError("Your account is not approved yet", 403));
-    }
+    throw new ApiError("Incorrect email or password", 401);
   }
 
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) {
-    return next(new ApiError("Incorrect email or password", 401));
+    throw new ApiError("Incorrect email or password", 401);
   }
 
-  const token = createToken(user._id);
+  const token = createAuthToken(user);
 
   res.status(200).json({
     status: "success",
     token,
-    user,
+    user: {
+      id: user._id,
+      email: user.email,
+      role: user.role,
+      city: user.city,
+    },
   });
 });
 
-// ==================== FORGET PASSWORD ====================
-// @route   POST /auth/forgot-password
-// @access  Public
-exports.forgetPassword = asyncHandler(async (req, res, next) => {
-  const email = req.body.email;
-  if (!email) {
-    return next(new ApiError("Email is required", 400));
-  }
+/* =================================================== */
+/* ============== FORGOT / RESET PASSWORD ============ */
+/* =================================================== */
 
-  // Optional: check user existence but keep response generic
+/**
+ * POST /auth/password/forgot
+ */
+exports.forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
   const user = await User.findOne({ email });
-
-  // Clear previous reset requests
   await Verification.deleteMany({ email, type: "passwordReset" });
 
-  // If user doesn't exist, return generic success (avoid user enumeration)
   if (!user) {
     return res.status(200).json({
-      status: "success",
-      message: "Password reset code sent to your email.",
+      message: "If the email exists, a reset code was sent.",
     });
   }
 
-  const resetCode = generateSixDigitCode();
-  const expirationTime = Date.now() + 10 * 60 * 1000;
+  const otp = generateOtp();
 
-  const hashedCode = await bcrypt.hash(resetCode, 12);
-
-  const message = `
-Your password reset code is:
-${resetCode}
-(valid for 10 minutes)
-`;
-
-  try {
-    await sendEmail({
-      Email: email,
-      subject: "Password Reset Code",
-      message,
-    });
-
-    await Verification.create({
-      email,
-      code: hashedCode,
-      expiresAt: new Date(expirationTime),
-      type: "passwordReset",
-    });
-
-    res.status(200).json({
-      status: "success",
-      message: "Password reset code sent to your email.",
-    });
-  } catch (err) {
-    console.error("Error sending password reset email:", err.message);
-    return next(new ApiError("Error sending email", 500));
-  }
-});
-
-// ==================== VERIFY FORGOT PASSWORD CODE ====================
-// @route   POST /auth/verify-reset-code
-// @access  Public
-exports.verifyForgotPasswordCode = asyncHandler(async (req, res, next) => {
-  const { email, code } = req.body;
-
-  if (!email || !code) {
-    return next(new ApiError("Email and code are required", 400));
-  }
-
-  const verification = await Verification.findOne({
+  await Verification.create({
     email,
+    code: hashOtp(otp),
     type: "passwordReset",
+    expiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
   });
 
-  if (!verification) {
-    return next(new ApiError("No reset request found", 400));
-  }
-
-  if (verification.expiresAt < Date.now()) {
-    await Verification.deleteOne({ _id: verification._id });
-    return next(new ApiError("Code expired", 400));
-  }
-
-  const isMatch = await bcrypt.compare(code, verification.code);
-  if (!isMatch) {
-    return next(new ApiError("Invalid reset code", 400));
-  }
-
-  verification.verified = true;
-  await verification.save();
+  await sendEmail({
+    Email: email,
+    subject: "Password Reset",
+    message: `Your password reset code is ${otp}`,
+  });
 
   res.status(200).json({
-    status: "success",
-    message: "Code verified successfully",
+    message: "If the email exists, a reset code was sent.",
   });
 });
 
-// ==================== RESET PASSWORD ====================
-// @route   POST /auth/reset-password
-// @access  Public
-exports.resetPassword = asyncHandler(async (req, res, next) => {
-  const { email, newPassword } = req.body;
-
-  if (!email || !newPassword) {
-    return next(new ApiError("Email and newPassword are required", 400));
-  }
-
-  if (newPassword.length < 8) {
-    return next(new ApiError("Password must be at least 8 characters", 400));
-  }
+/**
+ * POST /auth/password/verify
+ */
+exports.verifyResetOtp = asyncHandler(async (req, res) => {
+  const { email, code } = req.body;
 
   const verification = await Verification.findOne({
     email,
     type: "passwordReset",
-    verified: true,
+  }).select("+code");
+
+  if (!verification || verification.expiresAt < Date.now()) {
+    throw new ApiError("Invalid or expired code", 400);
+  }
+
+  if (hashOtp(code) !== verification.code) {
+    throw new ApiError("Invalid reset code", 400);
+  }
+
+  const resetToken = createTempToken(email, "reset");
+
+  res.status(200).json({
+    resetToken,
   });
+});
 
-  if (!verification) {
-    return next(new ApiError("No verified reset request found", 400));
+/**
+ * POST /auth/password/reset
+ */
+exports.resetPassword = asyncHandler(async (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  const { newPassword } = req.body;
+
+  const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  if (decoded.type !== "reset") {
+    throw new ApiError("Invalid token", 401);
   }
 
-  if (verification.expiresAt < Date.now()) {
-    await Verification.deleteOne({ _id: verification._id });
-    return next(new ApiError("Reset request expired", 400));
-  }
+  const user = await User.findOne({ email: decoded.email });
+  if (!user) throw new ApiError("User not found", 404);
 
-  const user = await User.findOne({ email });
-  if (!user) {
-    return next(new ApiError("User not found", 404));
-  }
-
-  const saltRounds = getSaltRounds();
-  user.password = await bcrypt.hash(newPassword, saltRounds);
+  user.password = await bcrypt.hash(newPassword, SALT_ROUNDS);
   user.passwordChangedAt = Date.now();
   await user.save();
 
-  await Verification.deleteOne({ _id: verification._id });
-
-  const token = createToken(user._id);
+  await Verification.deleteMany({ email: decoded.email });
 
   res.status(200).json({
-    status: "success",
     message: "Password reset successfully",
-    token,
   });
 });
 
@@ -422,28 +333,25 @@ exports.changePassword = asyncHandler(async (req, res, next) => {
   });
 });
 
-// ==================== UPDATE FCM TOKEN ====================
-// @route   PUT /users/updateFcmToken
-// @access  Private (user)
-exports.updateFcmToken = asyncHandler(async (req, res, next) => {
-  const { fcmToken } = req.body;
-
-  if (!fcmToken || !isValidFcmToken(fcmToken)) {
-    return next(new ApiError("FCM token is invalid", 400));
-  }
-
-  const user = await User.findByIdAndUpdate(
-    req.user._id,
-    { fcmToken: encryptToken(fcmToken) },
-    { new: true }
-  );
-
+exports.getLoggedInUser = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
   if (!user) {
-    return next(new ApiError("User not found", 404));
+    throw new ApiError("User not found", 404);
   }
+  if (user.role === "worker") {
+  const workerProfile = await WorkerProfile.findOne({ userId: req.user._id });
+    res.status(200).json({  
+      status: "success",
+      data:{user, workerProfile},
+    });
+    return;
+  }
+  else if (user.role === "employer") {
+  const employerProfile = await EmployerProfile.findOne({ userId: req.user._id });
 
-  res.status(200).json({
+  res.status(200).json({  
     status: "success",
-    message: "FCM Token updated successfully.",
+    data:{user},
   });
+  }
 });

@@ -1,33 +1,64 @@
 const mongoose = require("mongoose");
 
-const verificationSchema = new mongoose.Schema({
+const verificationSchema = new mongoose.Schema(
+  {
     email: {
-        type: String,
-        required: true,
-        lowercase: true,
+      type: String,
+      required: true,
+      lowercase: true,
+      index: true,
     },
+
     code: {
-        type: String, // هيكون Hashed
-        required: true,
+      type: String, // hashed
+      required: true,
+      select: false,
     },
-    expiresAt: {
-        type: Date,
-        required: true,
-    },
+
     type: {
-        type: String,
-        enum: ["emailVerification", "passwordReset"],
-        required: true,
+      type: String,
+      enum: ["emailVerification", "passwordReset"],
+      required: true,
+      index: true,
     },
+
+    expiresAt: {
+      type: Date,
+      required: true,
+    },
+
+    verifiedAt: {
+      type: Date,
+    },
+
+    attempts: {
+      type: Number,
+      default: 0,
+      max: 5,
+    },
+
+    resendCount: {
+      type: Number,
+      default: 0,
+      max: 3,
+    },
+
+    lastSentAt: {
+      type: Date,
+    },
+
     tempUserData: {
-        type: Object, // هنستخدمه بس لو type = emailVerification
+      type: Object,
+      select: false,
     },
-    verified: {
-        type: Boolean,
-        default: false,
-    },
-    }, {
-    timestamps: true,
-});
+  },
+  { timestamps: true }
+);
+
+/* Auto delete expired records */
+verificationSchema.index(
+  { expiresAt: 1 },
+  { expireAfterSeconds: 0 }
+);
 
 module.exports = mongoose.model("Verification", verificationSchema);
