@@ -141,17 +141,21 @@ exports.completeSignup = asyncHandler(async (req, res) => {
   });
 
   if (role === "worker") {
-    await WorkerProfile.create({
+    const worker= await WorkerProfile.create({
       userId: user._id,
       ...workerProfile,
     });
+    user.workerProfile = worker._id;
+    await user.save();
   }
 
   if (role === "employer") {
-    await EmployerProfile.create({
+   const employer = await EmployerProfile.create({
       userId: user._id,
       ...employerProfile,
     });
+    user.employerProfile = employer._id;
+    await user.save();
   }
 
   await Verification.deleteMany({ email: decoded.email });
