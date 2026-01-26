@@ -1,5 +1,6 @@
 const authRoutes = require("./authRoute");
 const adminRoutes = require("./adminRoute");
+const jobRoutes = require("./jobRoute");
 
 const mountRoutes = (app) => {
     app.use((req, res, next) => {
@@ -29,6 +30,7 @@ const mountRoutes = (app) => {
 //=============================
 app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
+app.use("/jobs", jobRoutes);
 
 //=============================
 // 404 Handler
