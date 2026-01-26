@@ -79,6 +79,14 @@ const userSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "IdentityVerification",
     },
+
+    discipline: {
+      warnings: { type: Number, default: 0 },
+      cancellations: { type: Number, default: 0 },
+      noShows: { type: Number, default: 0 },
+      blockedUntil: { type: Date }
+    },
+
   },
   { timestamps: true }
 );
