@@ -113,5 +113,10 @@ router.get(
   authController.getLoggedInUser
 );
 
+router.put(
+  "/update-fcm-tokens",
+  protect,
+  authController.updateFCMToken
+);
 
 module.exports = router;

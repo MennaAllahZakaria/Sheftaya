@@ -7,6 +7,12 @@ const User = require("../models/userModel");
 const WorkerProfile = require("../models/workerProfileModel");
 const ApiError = require("../utils/apiError");
 const penaltyService = require("../services/penaltyService");
+const {
+  sendNotificationNow,
+  scheduleNotification
+} = require("../services/notificationService");
+
+const {sendEmail}= require("../utils/sendEmail");
 
 /* =====================================================
    APPLY FOR JOB (Worker)
@@ -27,7 +33,7 @@ exports.applyForJob = asyncHandler(async (req, res) => {
     throw new ApiError("Your account is temporarily blocked", 403);
   }
 
-  const job = await Job.findById(jobId);
+  const job = await Job.findById(jobId).populate("employerId", "firstName lastName email fcmTokens");
   if (!job || job.status !== "open") {
     throw new ApiError("Job not available", 400);
   }
@@ -62,6 +68,26 @@ exports.applyForJob = asyncHandler(async (req, res) => {
     workerId,
   });
 
+  // notify employer
+  if (job.employerId.fcmTokens && job.employerId.fcmTokens.length > 0) {
+
+      await sendNotificationNow({
+        userId: job.employerId._id,
+        type: "job_applied",
+        title: "New Job Application",
+        message: `${req.user.firstName} ${req.user.lastName} applied for your job "${job.title}".`,
+        relatedJobId: job._id,
+      });
+  }else{
+
+  // email notification
+    await sendEmail({
+      Email: job.employerId.email,
+      subject: "عامل جديد قدم لوظيفتك",
+      message: `تم التقديم لوظيفتك من قبل ${req.user.firstName} ${req.user.lastName}. يرجى تسجيل الدخول إلى حسابك لمراجعة الطلب.`,
+    });
+  }
+
   res.status(201).json({
     status: "success",
     data: application,
@@ -92,7 +118,7 @@ exports.acceptWorker = asyncHandler(async (req, res) => {
 
     const application = await Application.findById(applicationId).session(
       session
-    );
+    ).populate("workerId", "fcmTokens email");
 
     if (!application || application.status !== "pending") {
       throw new ApiError("Invalid application", 400);
@@ -110,6 +136,26 @@ exports.acceptWorker = asyncHandler(async (req, res) => {
 
     await job.save({ session });
     await session.commitTransaction();
+
+      // notify worker
+      if (application.workerId.fcmTokens && application.workerId.fcmTokens.length > 0) {
+
+        await sendNotificationNow({
+          userId: application.workerId,
+          type: "تم قبول طلبك للوظيفة",
+          title: "تم قبول طلبك للوظيفة",
+          message: `تم قبول طلبك للوظيفة "${job.title}". يرجى تسجيل الدخول إلى حسابك لمزيد من التفاصيل.`,
+          relatedJobId: job._id,
+        });
+      }else{
+
+      // email notification
+        await sendEmail({
+          Email: application.workerId.email,
+          subject: "تم قبول طلبك للوظيفة",
+          message: `تم قبول طلبك للوظيفة "${job.title}". يرجى تسجيل الدخول إلى حسابك لمزيد من التفاصيل.`,
+        });
+      }
 
     res.status(200).json({
       status: "success",
@@ -138,7 +184,7 @@ exports.rejectWorker = asyncHandler(async (req, res) => {
     throw new ApiError("Unauthorized", 403);
   }
 
-  const application = await Application.findById(applicationId);
+  const application = await Application.findById(applicationId).populate("workerId", "fcmTokens email");
   if (!application || application.status !== "pending") {
     throw new ApiError("Invalid application", 400);
   }
@@ -146,6 +192,23 @@ exports.rejectWorker = asyncHandler(async (req, res) => {
   application.status = "rejected";
   await application.save();
 
+  // notify worker
+  if (application.workerId.fcmTokens && application.workerId.fcmTokens.length > 0) {
+      await sendNotificationNow({
+        userId: application.workerId._id,
+        type: "تم رفض طلبك للوظيفة",
+        title: "تم رفض طلبك للوظيفة",
+        message: `تم رفض طلبك للوظيفة "${job.title}". يرجى تسجيل الدخول إلى حسابك لمزيد من التفاصيل.`,
+        relatedJobId: job._id,
+      });
+  }else{
+  // email notification
+    await sendEmail({
+      Email: application.workerId.email,
+      subject: "تم رفض طلبك للوظيفة",
+      message: `تم رفض طلبك للوظيفة "${job.title}". يرجى تسجيل الدخول إلى حسابك لمزيد من التفاصيل.`,
+    });
+  }
   res.status(200).json({
     status: "success",
     message: "Worker rejected",
@@ -158,7 +221,7 @@ exports.rejectWorker = asyncHandler(async (req, res) => {
 // PUT /applications/:id/withdraw
 exports.withdrawApplication = asyncHandler(async (req, res) => {
   const application = await Application.findById(req.params.id).populate(
-    "jobId"
+    "jobId","employerId"
   );
 
   if (!application) throw new ApiError("Application not found", 404);
@@ -193,6 +256,25 @@ exports.withdrawApplication = asyncHandler(async (req, res) => {
         : "medium",
   });
 
+  const employer = await User.findById(job.employerId);
+
+  // notify employer
+  if (employer.fcmTokens && employer.fcmTokens.length > 0) {
+      await sendNotificationNow({
+        userId: employer._id,
+        type: "انسحاب عامل من طلب وظيفتك",
+        title:  "عامل انسحب من طلب وظيفتك",
+        message: `قام ${req.user.firstName} ${req.user.lastName} بالانسحاب من طلب وظيفتك "${job.title}". يرجى تسجيل الدخول إلى حسابك لمزيد من التفاصيل.`,
+        relatedJobId: job._id,
+      });
+  }else{
+  // email notification
+    await sendEmail({
+      Email: employer.email,
+      subject: "عامل انسحب من طلب وظيفتك",
+      message: `قام ${req.user.firstName} ${req.user.lastName} بالانسحاب من طلب وظيفتك "${job.title}". يرجى تسجيل الدخول إلى حسابك لمزيد من التفاصيل.`,
+    });
+  }
   res.status(200).json({
     status: "success",
     message: "Application withdrawn",

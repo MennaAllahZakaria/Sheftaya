@@ -4,7 +4,12 @@ const Job = require("../models/jobModel");
 const Application = require("../models/applicationModel");
 const ApiError = require("../utils/apiError");
 const penaltyService = require("../services/penaltyService");
+const {
+  sendNotificationNow,
+  scheduleNotification
+} = require("../services/notificationService");
 
+const {sendEmail}= require("../utils/sendEmail");
 /* =====================================================
    CREATE JOB (Draft)
 ===================================================== */
@@ -329,6 +334,32 @@ exports.cancelJob = asyncHandler(async (req, res) => {
   });
 
   await job.save();
+
+  // Notify accepted workers
+  const applications = await Application.find({
+    jobId: job._id,
+    status: "accepted"
+  }).populate("workerId", "fcmTokens email");
+
+  for (const app of applications) {
+    // push notification
+    if (app.workerId.fcmTokens && app.workerId.fcmTokens.length > 0) {
+      await sendNotificationNow({
+        userId: app.workerId,
+        type: "تم إلغاء الوظيفة",
+        title: "تم إلغاء الوظيفة",
+        message: `تم إلغاء الوظيفة "${job.title}" التي تم قبولك لها. نأسف للإزعاج.`,
+        relatedJobId: job._id,
+      });
+    }
+    else {
+      await sendEmail({
+        Email: app.workerId.email,
+        subject: "تم إلغاء الوظيفة",
+        message: `تم إلغاء الوظيفة "${job.title}" التي تم قبولك لها. نأسف للإزعاج.`,
+      });
+    }
+  }
 
   res.status(200).json({
     status: "success",

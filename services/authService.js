@@ -359,3 +359,23 @@ exports.getLoggedInUser = asyncHandler(async (req, res) => {
   });
   }
 });
+
+exports.updateFCMToken = asyncHandler(async (req, res) => {
+  const { fcmToken } = req.body;
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    throw new ApiError("User not found", 404);
+  }
+  // تحقق مما إذا كان الرمز موجودًا بالفعل
+  const tokenExists = user.fcmTokens.some(
+    (tokenObj) => tokenObj.token === fcmToken
+  );
+  if (!tokenExists) {
+    user.fcmTokens.push({ token: fcmToken });
+    await user.save();
+  }
+  res.status(200).json({
+    status: "success",
+    message: "FCM token updated successfully",
+  });
+});
