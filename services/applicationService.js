@@ -157,6 +157,28 @@ exports.acceptWorker = asyncHandler(async (req, res) => {
         });
       }
 
+      await notificationService.scheduleNotification({
+      userId: application.workerId,
+      type: "job_reminder_24h",
+      title: "تذكير بالشغل",
+      message: `بكرة عندك شغل ${job.title}`,
+      relatedJobId: job._id,
+      scheduledAt: new Date(
+        new Date(job.startDateTime).getTime() - 24 * 60 * 60 * 1000
+      ),
+    });
+
+    await notificationService.scheduleNotification({
+      userId: application.workerId,
+      type: "job_reminder_2h",
+      title: "تذكير بالشغل",
+      message: `فاض ساعتين على شغل ${job.title}`,
+      relatedJobId: job._id,
+      scheduledAt: new Date(
+        new Date(job.startDateTime).getTime() - 2 * 60 * 60 * 1000
+      ),
+    });
+
     res.status(200).json({
       status: "success",
       message: "Worker accepted",

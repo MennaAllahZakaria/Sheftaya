@@ -9,6 +9,7 @@ const compression = require("compression");
 const mountRoutes = require("./routes/index");
 const globalError = require("./middleware/errorMiddleware");
 const dbConnection = require("./config/database");
+const {startNotificationCron} = require("./cornJobs/notificationCron");
 // //Routes
 // // const mountRoutes = require("./routes");
 //connect with db
@@ -37,6 +38,9 @@ if (process.env.NODE_ENV == "development") {
 
 //Mount Routes
     mountRoutes(app);
+
+// Start cron jobs
+startNotificationCron();
 
 // app.all("*", (req, res, next) => {
 //   //Create error and send it to error handling middleware
