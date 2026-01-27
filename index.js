@@ -40,7 +40,7 @@ if (process.env.NODE_ENV == "development") {
     mountRoutes(app);
 
 // Start cron jobs
-startNotificationCron();
+// startNotificationCron();
 
 // app.all("*", (req, res, next) => {
 //   //Create error and send it to error handling middleware

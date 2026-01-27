@@ -45,14 +45,12 @@ const processScheduledNotifications = async () => {
   }
 };
 
-exports.startNotificationCron = () => {
-  cron.schedule("*/2 * * * *", async () => {
+exports.startNotificationCron = async() => {
+  
     try {
       await processScheduledNotifications();
     } catch (err) {
       console.error("[CRON] Notification cron error", err);
     }
-  });
-
   console.log("[CRON] Notification scheduler started");
 };

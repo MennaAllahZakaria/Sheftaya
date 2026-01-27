@@ -2,6 +2,7 @@ const authRoutes = require("./authRoute");
 const adminRoutes = require("./adminRoute");
 const jobRoutes = require("./jobRoute");
 const applicationRoutes = require("./applicationRoute");
+const notificationCron = require("../cornJobs/notificationCornRoute");
 
 const mountRoutes = (app) => {
     app.use((req, res, next) => {
@@ -33,6 +34,8 @@ app.use("/auth", authRoutes);
 app.use("/admin", adminRoutes);
 app.use("/jobs", jobRoutes);
 app.use("/applications", applicationRoutes);
+
+app.use("/cornJobs", notificationCron);
 
 //=============================
 // 404 Handler
