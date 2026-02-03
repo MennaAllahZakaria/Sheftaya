@@ -1,10 +1,32 @@
 const express = require("express");
 const router = express.Router();
 
-const authController = require("../services/authService");
+//upload controller
+const {uploadImagesAndFiles , attachUploadedLinks} = require("../middleware/uploadFileMiddleware");
 
+const {
+        signupRequest,
+        verifySignupOtp,
+        completeSignup,
+        login,
+        forgotPassword,
+        verifyResetOtp,
+        resetPassword,
+        changePassword,
+        getLoggedInUser,
+        updateFCMToken
+      } = require("../services/authService");
+
+
+const {
+        signupRequestValidation,
+        verifyOtpValidation,
+        completeSignupValidation,
+        loginValidation,
+        forgotPasswordValidation,
+        resetPasswordValidation
+      } = require("../utils/validators/authValidator");
 // Validation
-const authValidation = require("..//utils/validators/authValidator");
 
 // Auth & Authorization
 const { protect, allowedTo } = require("../middleware/authMiddleware");
@@ -19,8 +41,8 @@ const { protect, allowedTo } = require("../middleware/authMiddleware");
  */
 router.post(
   "/signup/request",
-  authValidation.signupRequestValidation,
-  authController.signupRequest
+  signupRequestValidation,
+  signupRequest
 );
 
 /**
@@ -29,8 +51,8 @@ router.post(
  */
 router.post(
   "/signup/verify",
-  authValidation.verifyOtpValidation,
-  authController.verifySignupOtp
+  verifyOtpValidation,
+  verifySignupOtp
 );
 
 /**
@@ -40,8 +62,10 @@ router.post(
  */
 router.post(
   "/signup/complete",
-  authValidation.completeSignupValidation,
-  authController.completeSignup
+  uploadImagesAndFiles,
+  attachUploadedLinks,
+  completeSignupValidation,
+  completeSignup
 );
 
 /* =====================================================
@@ -53,8 +77,8 @@ router.post(
  */
 router.post(
   "/login",
-  authValidation.loginValidation,
-  authController.login
+  loginValidation,
+  login
 );
 
 /* =====================================================
@@ -67,8 +91,8 @@ router.post(
  */
 router.post(
   "/password/forgot",
-  authValidation.forgotPasswordValidation,
-  authController.forgotPassword
+  forgotPasswordValidation,
+  forgotPassword
 );
 
 /**
@@ -77,8 +101,8 @@ router.post(
  */
 router.post(
   "/password/verify",
-  authValidation.verifyOtpValidation,
-  authController.verifyResetOtp
+  verifyOtpValidation,
+  verifyResetOtp
 );
 
 /**
@@ -88,8 +112,8 @@ router.post(
  */
 router.post(
   "/password/reset",
-  authValidation.resetPasswordValidation,
-  authController.resetPassword
+  resetPasswordValidation,
+  resetPassword
 );
 
 /* =====================================================
@@ -103,20 +127,20 @@ router.post(
 router.put(
   "/change-password",
   protect,
-  authValidation.resetPasswordValidation,
-  authController.changePassword
+  resetPasswordValidation,
+  changePassword
 );
 
 router.get(
   "/me",
   protect,
-  authController.getLoggedInUser
+  getLoggedInUser
 );
 
 router.put(
   "/update-fcm-tokens",
   protect,
-  authController.updateFCMToken
+  updateFCMToken
 );
 
 module.exports = router;

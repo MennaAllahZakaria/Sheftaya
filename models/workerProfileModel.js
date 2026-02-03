@@ -9,6 +9,10 @@ const workerProfileSchema = new mongoose.Schema(
       unique: true,
       index: true,
     },
+    education :{
+      type: String,
+      required: true,
+    },
 
     professionalStatus: {
       type: String,
@@ -53,6 +57,11 @@ const workerProfileSchema = new mongoose.Schema(
         type: String,
         default: "EGP",
       },
+    },
+
+    healthCertificate: {
+      type: String,
+      default: null,
     },
   },
   { timestamps: true }

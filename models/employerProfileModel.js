@@ -1,60 +1,105 @@
-const mongoose = require("mongoose");
+const multer = require("multer");
+const { CloudinaryStorage } = require("multer-storage-cloudinary");
+const cloudinary = require("../utils/cloudinary");
+const ApiError = require("../utils/apiError");
 
-const employerProfileSchema = new mongoose.Schema(
-  {
-    userId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-      unique: true,
-      index: true,
-    },
+/* ============================================
+   STORAGE
+============================================ */
 
-    companyName: {
-      type: String,
-      required: true,
-      index: true,
-    },
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: async (req, file) => {
+    let folder = "uploads";
+    let resource_type = "raw";
 
-    companyType: {
-      type: String,
-      required: true,
-      index: true,
-    },
+    if (
+      ["frontIdImage", "backIdImage", "selfieImage"].includes(file.fieldname)
+    ) {
+      folder = "identity_images";
+      resource_type = "image";
+    }
 
-    companyAddress: {
-      type: String,
-      required: true,
-    },
+    else if (file.fieldname === "healthCertificate") {
+      folder = "health_certificates";
+      resource_type = file.mimetype.startsWith("image/") ? "image" : "raw";
+    }
 
-    city: {
-      type: String,
-      required: true,
-      index: true,
-    },
+    else if (file.fieldname === "companyImages") {
+      folder = "company_images";
+      resource_type = "image";
+    }
 
-    taxNumber: {
-      type: String,
-    },
-
-    commercialRegisterNumber: {
-      type: String,
-      unique: true,
-      sparse: true,
-    },
-
-    contactPersonName: String,
-
-    companyImages: {
-      type: [String],
-      default: [],
-    },
+    return {
+      folder,
+      resource_type,
+      public_id: `${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`,
+    };
   },
-  { timestamps: true }
-);
+});
 
-// شائع جدا في البحث
-employerProfileSchema.index({ city: 1, companyType: 1 });
+/* ============================================
+   FILTER
+============================================ */
 
-module.exports = mongoose.model("EmployerProfile", employerProfileSchema);
+const fileFilter = (req, file, cb) => {
+  const isImage = file.mimetype.startsWith("image/");
+  const isPdf = file.mimetype === "application/pdf";
 
+  if (
+    ["frontIdImage", "backIdImage", "selfieImage"].includes(file.fieldname) &&
+    !isImage
+  ) {
+    return cb(new ApiError("Only images allowed", 400), false);
+  }
+
+  if (file.fieldname === "healthCertificate" && !(isPdf || isImage)) {
+    return cb(new ApiError("Only PDF or image allowed", 400), false);
+  }
+
+  if (file.fieldname === "companyImages" && !isImage) {
+    return cb(new ApiError("Only images allowed", 400), false);
+  }
+
+  cb(null, true);
+};
+
+/* ============================================
+   MULTER
+============================================ */
+
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB safer
+  },
+});
+
+/* ============================================
+   MIDDLEWARES
+============================================ */
+
+exports.uploadImagesAndFiles = upload.fields([
+  { name: "frontIdImage", maxCount: 1 },
+  { name: "backIdImage", maxCount: 1 },
+  { name: "selfieImage", maxCount: 1 },
+  { name: "healthCertificate", maxCount: 1 },
+  { name: "companyImages", maxCount: 5 },
+]);
+
+exports.attachUploadedLinks = (req, res, next) => {
+  try {
+    req.uploadedFiles = {};
+
+    Object.keys(req.files || {}).forEach((key) => {
+      req.uploadedFiles[key] = req.files[key].map((f) => f.path);
+    });
+
+    next();
+  } catch {
+    next(new ApiError("Error processing uploaded files", 500));
+  }
+};
