@@ -10,6 +10,7 @@ const Verification = require("../models/verificationModel");
 
 const ApiError = require("../utils/apiError");
 const sendEmail = require("../utils/sendEmail");
+const { profile } = require("console");
 
 /* ===================== Helpers ===================== */
 
@@ -186,6 +187,14 @@ exports.login = asyncHandler(async (req, res) => {
     throw new ApiError("Incorrect email or password", 401);
   }
 
+  let workerProfile = null;
+  if (user.role === "worker") {
+    workerProfile = await WorkerProfile.findOne({ userId: user._id });
+  }
+  let employerProfile = null;
+  if (user.role === "employer") {
+    employerProfile = await EmployerProfile.findOne({ userId: user._id });
+  }
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) {
     throw new ApiError("Incorrect email or password", 401);
@@ -198,9 +207,10 @@ exports.login = asyncHandler(async (req, res) => {
     token,
     user: {
       id: user._id,
-      email: user.email,
-      role: user.role,
-      city: user.city,
+      data : {
+        user,
+        profile: user.role === "worker" ? workerProfile : employerProfile,
+      }
     },
   });
 });
