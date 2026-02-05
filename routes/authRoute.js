@@ -6,9 +6,11 @@ const {uploadImagesAndFiles , attachUploadedLinks} = require("../middleware/uplo
 
 const {
         signup,
+        resendSignupOtp,
         verifySignupOtp,
         login,
         forgotPassword,
+        resendPasswordResetOtp,
         verifyResetOtp,
         resetPassword,
         changePassword,
@@ -56,6 +58,15 @@ router.post(
   verifySignupOtp
 );
 
+/**
+ * Resend signup OTP
+ * POST /auth/signup/resend-otp
+ *  Body: { email }
+ */
+router.post(
+  "/signup/resend-otp",
+  resendSignupOtp
+);
 
 
 /* =====================================================
@@ -83,6 +94,15 @@ router.post(
   "/password/forgot",
   forgotPasswordValidation,
   forgotPassword
+);
+
+/**
+ * Resend password reset OTP
+ * POST /auth/password/resend-otp
+ **/
+router.post(
+  "/password/resend-otp",
+  resendPasswordResetOtp
 );
 
 /**

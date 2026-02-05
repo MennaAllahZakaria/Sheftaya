@@ -100,6 +100,45 @@ exports.signup = asyncHandler(async (req, res) => {
      
 });
 
+// ===================== RESEND OTP =====================
+
+exports.resendSignupOtp = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  const existingVerification = await Verification.findOne({ email , type: "emailVerification" });
+
+  if (!existingVerification) {
+    throw new ApiError("No signup request found for this email", 404);
+  }
+  if (existingVerification.resendCount >= 5 && existingVerification.lastSentAt && existingVerification.lastSentAt > new Date(Date.now() - 60 * 60 * 1000)) {
+    await Verification.deleteOne({ _id: existingVerification._id });
+    throw new ApiError("Too many resend attempts. Please signup again.", 400);
+  }
+  if (existingVerification.expiresAt < Date.now()) {
+    await Verification.deleteOne({ _id: existingVerification._id });
+    throw new ApiError("OTP expired. Please signup again.", 400);
+  }
+
+  const otp = generateOtp();
+
+  existingVerification.code = hashOtp(otp);
+  existingVerification.expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
+  await existingVerification.save();
+    await sendEmail({
+      Email: email,
+      subject: "Resend OTP - Verify your account",
+      message: `Your new OTP code is ${otp}`,
+    });
+
+  existingVerification.resendCount += 1;
+  existingVerification.lastSentAt = new Date();
+  await existingVerification.save();
+
+  res.status(200).json({
+    status: "success",
+    message: "New OTP sent to email",
+  });
+});
+
 /*==================================================== */
 /* =============== VERIFY SIGNUP OTP ================== */
 /*==================================================== */
@@ -112,6 +151,17 @@ exports.verifySignupOtp = asyncHandler(async (req, res) => {
 
   if (!verification) {
     throw new ApiError("Invalid or expired code", 400);
+  }
+  if (verification.expiresAt < Date.now()) {
+    await Verification.deleteOne({ _id: verification._id });
+    throw new ApiError("Invalid or expired code ", 400);
+  }
+  if (verification.type !== "emailVerification") {
+    throw new ApiError("Invalid verification type", 400);
+  }
+  if (verification.attempts >= 5) {
+    await Verification.deleteOne({ _id: verification._id });
+    throw new ApiError("Too many failed attempts. Please signup again.", 400);
   }
 
   if (hashOtp(code) !== verification.code) {
@@ -247,6 +297,45 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
 
   res.status(200).json({
     message: "If the email exists, a reset code was sent.",
+  });
+});
+
+// ==================== RESEND PASSWORD RESET OTP ====================
+
+exports.resendPasswordResetOtp = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  const existingVerification = await Verification.findOne({ email, type: "passwordReset" });
+
+  if (!existingVerification) {
+    throw new ApiError("No password reset request found for this email", 404);
+  }
+  if (existingVerification.resendCount >= 5 && existingVerification.lastSentAt && existingVerification.lastSentAt > new Date(Date.now() - 60 * 60 * 1000)) {
+    await Verification.deleteOne({ _id: existingVerification._id });
+    throw new ApiError("Too many resend attempts. Please initiate forgot password again.", 400);
+  }
+  if (existingVerification.expiresAt < Date.now()) {
+    await Verification.deleteOne({ _id: existingVerification._id });
+    throw new ApiError("OTP expired. Please initiate forgot password again.", 400);
+  }
+
+  const otp = generateOtp();
+
+  existingVerification.code = hashOtp(otp);
+  existingVerification.expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
+  await existingVerification.save();
+  await sendEmail({
+      Email: email,
+      subject: "Resend OTP - Password Reset",
+      message: `Your new password reset OTP code is ${otp}`,
+    });
+
+  existingVerification.resendCount += 1;
+  existingVerification.lastSentAt = new Date();
+  await existingVerification.save();
+
+  res.status(200).json({
+    status: "success",
+    message: "New password reset OTP sent to email",
   });
 });
 
