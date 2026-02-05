@@ -38,7 +38,6 @@ const jobSchema = new mongoose.Schema(
     startDateTime: {
       type: Date,
       required: true,
-      index: true,
     },
 
     endDateTime: {

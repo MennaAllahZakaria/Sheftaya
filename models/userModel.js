@@ -42,7 +42,7 @@ const userSchema = new mongoose.Schema(
     preferredLang: {
       type: String,
       enum: ["en", "ar"],
-      default: "en",
+      default: "ar",
     },
 
     city: {
@@ -65,26 +65,18 @@ const userSchema = new mongoose.Schema(
       },
     ],
 
-    workerProfile: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "WorkerProfile",
-    },
-
-    employerProfile: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "EmployerProfile",
-    },
-
-    identityVerification: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "IdentityVerification",
-    },
 
     discipline: {
       warnings: { type: Number, default: 0 },
       cancellations: { type: Number, default: 0 },
       noShows: { type: Number, default: 0 },
       blockedUntil: { type: Date }
+    },
+
+    status: {
+      type: String,
+      enum: ["pending", "active", "suspended"], 
+      default: "pending",
     },
 
   },

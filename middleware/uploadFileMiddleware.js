@@ -3,20 +3,32 @@ const { CloudinaryStorage } = require("multer-storage-cloudinary");
 const cloudinary = require("../utils/cloudinary");
 const ApiError = require("../utils/apiError");
 
-// إعدادات تخزين عامة على Cloudinary
+/* =================================================
+   CLOUDINARY STORAGE
+================================================= */
+
 const storage = new CloudinaryStorage({
   cloudinary,
   params: async (req, file) => {
     let folder = "uploads";
     let resource_type = "raw";
 
-    if (file.fieldname === "frontIdImage" || file.fieldname === "backIdImage" || file.fieldname === "selfieImage") {
-      folder = "idenity_images";
+    // KYC Images
+    if (
+      ["frontIdImage", "backIdImage", "selfieImage"].includes(file.fieldname)
+    ) {
+      folder = "identity_images";
       resource_type = "image";
-    } else if (file.fieldname === "healthCertificate") {
-      folder = "healthCertificates";
-      resource_type = (file.mimetype.startsWith("image/")) ? "image" : "raw";
-    }else if (file.fieldname === "companyImages") {
+    }
+
+    // Health certificate
+    else if (file.fieldname === "healthCertificate") {
+      folder = "health_certificates";
+      resource_type = file.mimetype.startsWith("image/") ? "image" : "raw";
+    }
+
+    // Company images
+    else if (file.fieldname === "companyImages") {
       folder = "company_images";
       resource_type = "image";
     }
@@ -24,90 +36,82 @@ const storage = new CloudinaryStorage({
     return {
       folder,
       resource_type,
-      public_id: `${Date.now()}-${file.originalname.split(".")[0].trim().replace(/\s+/g, "_")}`,
-      format: file.mimetype.split("/")[1],
+
+      // safer than originalname
+      public_id: `${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 10)}`,
     };
   },
 });
 
-// الفلتر للتأكد من نوع الملفات المقبولة
+/* =================================================
+   FILE FILTER (SECURE + CLEAN)
+================================================= */
+
 const fileFilter = (req, file, cb) => {
+  const isImage = file.mimetype.startsWith("image/");
+  const isPdf = file.mimetype === "application/pdf";
+
+  // ID + selfie → images only
   if (
-    file.fieldname === "frontIdImage"    &&
-    !file.mimetype.startsWith("image/")
+    ["frontIdImage", "backIdImage", "selfieImage"].includes(file.fieldname) &&
+    !isImage
   ) {
-    return cb(new ApiError("Only images allowed for frontIdImage", 400), false);
+    return cb(new ApiError("Only images allowed", 400), false);
   }
 
-  if (
-    file.fieldname === "backIdImage"    &&
-    !file.mimetype.startsWith("image/")
-  ) {
-    return cb(new ApiError("Only images allowed for backIdImage", 400), false);
+  // certificate → pdf or image
+  if (file.fieldname === "healthCertificate" && !(isPdf || isImage)) {
+    return cb(new ApiError("Only PDF or image allowed", 400), false);
   }
 
-  if (
-     file.fieldname === "selfieImage"   &&
-    !file.mimetype.startsWith("image/")
-  ) {
-    return cb(new ApiError("Only images allowed for selfieImage", 400), false);
-  }
-
-  
-  if (
-    file.fieldname === "healthCertificate" &&
-    file.mimetype !== "application/pdf" || file.mimetype.startsWith("image/")
-  ) {
-    return cb(new ApiError("Only PDF & image allowed for healthCertificate", 400), false);
-  }
-  if (
-    file.fieldname === "company_images" &&
-    file.mimetype.startsWith("image/")
-  ) {
-    return cb(new ApiError("Onlyimage allowed for company_images", 400), false);
+  // company images → images only
+  if (file.fieldname === "companyImages" && !isImage) {
+    return cb(new ApiError("Only images allowed for companyImages", 400), false);
   }
 
   cb(null, true);
 };
 
-// إعداد multer
+/* =================================================
+   MULTER CONFIG
+================================================= */
+
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB safer
+  },
 });
 
-// ميدل وير لرفع صورة وملف معًا
+/* =================================================
+   UPLOAD MIDDLEWARE
+================================================= */
+
 exports.uploadImagesAndFiles = upload.fields([
   { name: "frontIdImage", maxCount: 1 },
   { name: "backIdImage", maxCount: 1 },
   { name: "selfieImage", maxCount: 1 },
   { name: "healthCertificate", maxCount: 1 },
-  { name: "company_images", maxCount: 5 },
+  { name: "companyImages", maxCount: 5 },
 ]);
 
-// ميدل وير لإضافة اللينكات في req
+/* =================================================
+   ATTACH LINKS (SCALABLE)
+================================================= */
+
 exports.attachUploadedLinks = (req, res, next) => {
   try {
-    if (req.files?.frontIdImage?.[0]) {
-      req.frontIdImageUrl = req.files.frontIdImage[0].path;
-    }
-    if (req.files?.backIdImage?.[0]) {
-      req.backIdImageUrl = req.files.backIdImage[0].path;
-    }
-    if (req.files?.selfieImage?.[0]) {
-      req.selfieImageUrl = req.files.selfieImage[0].path;
-    }
-    if (req.files?.healthCertificate?.[0]) {
-      req.healthCertificateUrl = req.files.healthCertificate[0].path;
-    }
-    if (req.files?.company_images?.[0]) {
-      req.company_imagesUrl = req.files.company_images[0].path;
-    }
+    req.uploadedFiles = {};
 
+    Object.keys(req.files || {}).forEach((key) => {
+      req.uploadedFiles[key] = req.files[key].map((f) => f.path);
+    });
 
     next();
-  } catch (err) {
+  } catch {
     next(new ApiError("Error processing uploaded files", 500));
   }
 };

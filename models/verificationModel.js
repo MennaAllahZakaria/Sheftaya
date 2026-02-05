@@ -6,11 +6,10 @@ const verificationSchema = new mongoose.Schema(
       type: String,
       required: true,
       lowercase: true,
-      index: true,
     },
 
     code: {
-      type: String, // hashed
+      type: String,
       required: true,
       select: false,
     },
@@ -19,7 +18,6 @@ const verificationSchema = new mongoose.Schema(
       type: String,
       enum: ["emailVerification", "passwordReset"],
       required: true,
-      index: true,
     },
 
     expiresAt: {
@@ -27,38 +25,35 @@ const verificationSchema = new mongoose.Schema(
       required: true,
     },
 
-    verifiedAt: {
-      type: Date,
-    },
+    verifiedAt: Date,
 
     attempts: {
       type: Number,
       default: 0,
-      max: 5,
     },
 
     resendCount: {
       type: Number,
       default: 0,
-      max: 3,
     },
 
-    lastSentAt: {
-      type: Date,
-    },
+    lastSentAt: Date,
 
-    tempUserData: {
-      type: Object,
+    /* ======================
+       SIGNUP PAYLOAD
+    ======================= */
+    payload: {
+      type: mongoose.Schema.Types.Mixed,
       select: false,
     },
   },
   { timestamps: true }
 );
 
-/* Auto delete expired records */
-verificationSchema.index(
-  { expiresAt: 1 },
-  { expireAfterSeconds: 0 }
-);
+/* compound index */
+verificationSchema.index({ email: 1, type: 1 });
+
+/* auto delete expired */
+verificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 module.exports = mongoose.model("Verification", verificationSchema);

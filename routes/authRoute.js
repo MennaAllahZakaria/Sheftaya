@@ -5,9 +5,8 @@ const router = express.Router();
 const {uploadImagesAndFiles , attachUploadedLinks} = require("../middleware/uploadFileMiddleware");
 
 const {
-        signupRequest,
+        signup,
         verifySignupOtp,
-        completeSignup,
         login,
         forgotPassword,
         verifyResetOtp,
@@ -40,9 +39,11 @@ const { protect, allowedTo } = require("../middleware/authMiddleware");
  * POST /auth/signup/request
  */
 router.post(
-  "/signup/request",
+  "/signup",
+  uploadImagesAndFiles,
+  attachUploadedLinks,
   signupRequestValidation,
-  signupRequest
+  signup
 );
 
 /**
@@ -55,18 +56,7 @@ router.post(
   verifySignupOtp
 );
 
-/**
- * STEP 3 – Complete signup (create user + profile)
- * POST /auth/signup/complete
- * Header: Authorization: Bearer signupToken
- */
-router.post(
-  "/signup/complete",
-  uploadImagesAndFiles,
-  attachUploadedLinks,
-  completeSignupValidation,
-  completeSignup
-);
+
 
 /* =====================================================
    AUTH – LOGIN

@@ -47,16 +47,16 @@ const identityVerificationSchema = new mongoose.Schema(
 
 /* ===== Business Validation ===== */
 
-identityVerificationSchema.pre("save", function (next) {
+identityVerificationSchema.pre("save" , function () {
   if (this.status === "rejected" && !this.rejectionReason) {
-    return next(new Error("Rejection reason required"));
+    return (new Error("Rejection reason required"));
   }
 
   if (this.status === "approved" && !this.selfieImage) {
-    return next(new Error("Selfie image required for approval"));
+    return (new Error("Selfie image required for approval"));
   }
 
-  next();
+  return;
 });
 
 module.exports = mongoose.model("IdentityVerification", identityVerificationSchema);

@@ -1,30 +1,83 @@
 const validatorMiddleware = require("../../middleware/validatorMiddleware");
 
 // validations/authValidation.js
-const { body } = require("express-validator");
+const { check } = require("express-validator");
 
 exports.signupRequestValidation = [
-  body("email")
+  check("email")
     .isEmail()
     .withMessage("Invalid email format")
     .normalizeEmail(),
 
-  body("password")
+  check("password")
+    .notEmpty()
+    .withMessage("Password is required")
     .isLength({ min: 8 })
-    .withMessage("Password must be at least 8 characters")
-    .matches(/[A-Z]/).withMessage("Password must contain uppercase letter")
-    .matches(/[a-z]/).withMessage("Password must contain lowercase letter")
-    .matches(/[0-9]/).withMessage("Password must contain number"),
+    .withMessage("Password must be at least 8 characters"),
+
+  check("confirmPassword")
+    .notEmpty()
+    .withMessage("Confirm Password is required")
+    .custom((value, { req }) => {
+      if (value !== req.body.password) {
+        throw new Error("Password confirmation does not match password");
+      }
+      return true;
+    }),
+
+  // check("role")
+  //   .isIn(["worker", "employer"])
+  //   .withMessage("Role must be either 'worker' or 'employer'"),
+
+  
+  // check("employerProfile.companyName")
+  //   .if(check("role").equals("employer"))
+  //   .notEmpty()
+  //   .withMessage("Company name is required for employer"),
+  // check("employerProfile.companyType")
+  //   .if(check("role").equals("employer"))
+  //   .notEmpty()
+  //   .withMessage("Company type is required for employer"),
+  // check("employerProfile.companyAddress")
+  //   .if(check("role").equals("employer"))
+  //   .notEmpty()
+  //   .withMessage("Company address is required for employer"),
+  // check("employerProfile.city")
+  //   .if(check("role").equals("employer"))
+  //   .notEmpty()
+  //   .withMessage("City is required for employer"),
+
+  // check("workerProfile.education")
+  //   .if(check("role").equals("worker"))
+  //   .notEmpty()
+  //   .withMessage("Education is required for worker"),
+  // check("workerProfile.professionalStatus")
+  //   .if(check("role").equals("worker"))
+  //   .optional()
+  //   .isIn(["student", "full_time", "part_time", "unemployed", "other"])
+  //   .withMessage("Invalid professional status for worker"),
+  // check("workerProfile.pastExperience")
+  //   .if(check("role").equals("worker"))
+  //   .optional()
+  //   .isArray()
+  //   .withMessage("Past experience must be an array for worker"),
+  // check("workerProfile.jobsLookedFor")
+  //   .if(check("role").equals("worker"))
+  //   .notEmpty()
+  //   .withMessage("Jobs looked for is required for worker")
+  //   .isArray({ min: 1 })
+  //   .withMessage("Jobs looked for must be an array with at least one job for worker"),
+
 
 validatorMiddleware
 ];
 
 exports.verifyOtpValidation = [
-  body("email")
+  check("email")
     .isEmail()
     .withMessage("Invalid email"),
 
-  body("code")
+  check("code")
     .isLength({ min: 6, max: 6 })
     .isNumeric()
     .withMessage("OTP must be 6 digits"),
@@ -32,50 +85,47 @@ validatorMiddleware
 ];
 
 exports.completeSignupValidation = [
-  body("firstName")
+  check("firstName")
     .trim()
     .notEmpty()
     .withMessage("First name required"),
 
-  body("lastName")
+  check("lastName")
     .trim()
     .notEmpty()
     .withMessage("Last name required"),
 
-  body("role")
+  check("role")
     .isIn(["worker", "employer"])
     .withMessage("Invalid role"),
 
-  body("city")
+  check("city")
     .notEmpty()
     .withMessage("City is required"),
 
-  body("password")
-    .isLength({ min: 8 })
-    .withMessage("Password must be at least 8 characters"),
-validatorMiddleware
+    validatorMiddleware
 ];
 
 exports.loginValidation = [
-  body("email")
+  check("email")
     .isEmail()
     .normalizeEmail(),
 
-  body("password")
+  check("password")
     .notEmpty()
     .withMessage("Password is required"),
 validatorMiddleware
 ];
 
 exports.forgotPasswordValidation = [
-  body("email")
+  check("email")
     .isEmail()
     .normalizeEmail(),
 validatorMiddleware
 ];
 
 exports.resetPasswordValidation = [
-  body("newPassword")
+  check("newPassword")
     .isLength({ min: 8 })
     .withMessage("Password must be at least 8 characters"),
 validatorMiddleware

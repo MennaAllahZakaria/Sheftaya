@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const bcrypt = require("bcrypt");
+const mongoose = require("mongoose");
 const asyncHandler = require("express-async-handler");
 const jwt = require("jsonwebtoken");
 
@@ -7,6 +8,7 @@ const User = require("../models/userModel");
 const WorkerProfile = require("../models/workerProfileModel");
 const EmployerProfile = require("../models/employerProfileModel");
 const Verification = require("../models/verificationModel");
+const IdentityVerification = require("../models/identityVerificationModel");
 
 const ApiError = require("../utils/apiError");
 const sendEmail = require("../utils/sendEmail");
@@ -15,7 +17,13 @@ const { profile } = require("console");
 /* ===================== Helpers ===================== */
 
 const OTP_EXPIRY_MS = 10 * 60 * 1000;
-const SALT_ROUNDS = process.env.HASH_PASS ;
+
+const getSaltRounds = () => {
+  return parseInt(process.env.HASH_PASS, 10) || 12;
+};
+
+const SALT_ROUNDS = getSaltRounds();
+
 
 const generateOtp = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
@@ -40,88 +48,11 @@ const createTempToken = (email, type) =>
 /* =================================================== */
 /* ===================== SIGNUP ====================== */
 /* =================================================== */
-
-/**
- * POST /auth/signup/request
- */
-exports.signupRequest = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    throw new ApiError("Email and password are required", 400);
-  }
-
-  if (password.length < 8) {
-    throw new ApiError("Password must be at least 8 characters", 400);
-  }
-
-  await Verification.deleteMany({ email, type: "emailVerification" });
-
-  const otp = generateOtp();
-  const hashedOtp = hashOtp(otp);
-
-  await Verification.create({
-    email,
-    code: hashedOtp,
-    type: "emailVerification",
-    expiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
-  });
-
-  await sendEmail({
-    Email: email,
-    subject: "Verify your email",
-    message: `Your verification code is ${otp}. It expires in 10 minutes.`,
-  });
-
-  res.status(200).json({
-    status: "success",
-    message: "If the email is valid, a verification code was sent.",
-  });
-});
-
-/**
- * POST /auth/signup/verify
- */
-exports.verifySignupOtp = asyncHandler(async (req, res) => {
-  const { email, code } = req.body;
-
-  const verification = await Verification.findOne({
-    email,
-    type: "emailVerification",
-  }).select("+code");
-
-  if (!verification || verification.expiresAt < Date.now()) {
-    throw new ApiError("Invalid or expired code", 400);
-  }
-
-  const isValid = hashOtp(code) === verification.code;
-  if (!isValid) {
-    throw new ApiError("Invalid verification code", 400);
-  }
-
-  const signupToken = createTempToken(email, "signup");
-
-  res.status(200).json({
-    status: "success",
-    signupToken,
-  });
-});
-
-/**
- * POST /auth/signup/complete
- */
-exports.completeSignup = asyncHandler(async (req, res) => {
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token) throw new ApiError("Unauthorized", 401);
-
-  const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
-  if (decoded.type !== "signup") {
-    throw new ApiError("Invalid token", 401);
-  }
-
+exports.signup = asyncHandler(async (req, res) => {
   const {
     firstName,
     lastName,
+    email,
     password,
     role,
     city,
@@ -129,49 +60,109 @@ exports.completeSignup = asyncHandler(async (req, res) => {
     employerProfile,
   } = req.body;
 
+  const files = req.uploadedFiles || {};
 
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
-  const user = await User.create({
-    firstName,
-    lastName,
-    email: decoded.email,
-    password: hashedPassword,
-    role,
-    city,
+  const otp = generateOtp();
+
+  await Verification.create({
+    email,
+    code: hashOtp(otp),
+    type: "emailVerification",
+    expiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
+
+    payload: {
+      userData: {
+        firstName,
+        lastName,
+        email,
+        password: hashedPassword,
+        role,
+        city,
+      },
+      workerData: workerProfile,
+      employerData: employerProfile,
+      files,
+    },
   });
 
-  if (role === "worker") {
-    const worker= await WorkerProfile.create({
-      userId: user._id,
-      ...workerProfile,
-    });
-    user.workerProfile = worker._id;
-    await user.save();
-  }
+  await sendEmail({
+    Email: email,
+    subject: "Verify your account",
+    message: `Your code is ${otp}`,
+  });
 
-  if (role === "employer") {
-   const employer = await EmployerProfile.create({
-      userId: user._id,
-      ...employerProfile,
-    });
-    user.employerProfile = employer._id;
-    await user.save();
-  }
-
-  await Verification.deleteMany({ email: decoded.email });
-
-  const authToken = createAuthToken(user);
-
-  res.status(201).json({
+  res.status(200).json({ 
     status: "success",
-    token: authToken,
-    user: {
-      id: user._id,
-      email: user.email,
-      role: user.role,
-      city: user.city,
-    },
+    message: "Signup request received. Please verify your email with the OTP sent." 
+  });
+     
+});
+
+/*==================================================== */
+/* =============== VERIFY SIGNUP OTP ================== */
+/*==================================================== */
+exports.verifySignupOtp = asyncHandler(async (req, res) => {
+  const { email, code } = req.body;
+
+  const verification = await Verification
+    .findOne({ email })
+    .select("+code +payload");
+
+  if (!verification) {
+    throw new ApiError("Invalid or expired code", 400);
+  }
+
+  if (hashOtp(code) !== verification.code) {
+    verification.attempts++;
+    await verification.save();
+    throw new ApiError("Invalid code", 400);
+  }
+
+  const payload = verification.payload || {};
+
+  let { userData, workerData, employerData, files } = payload;
+
+  if (typeof workerData === "string") workerData = JSON.parse(workerData);
+  if (typeof employerData === "string") employerData = JSON.parse(employerData);
+
+  const user = await User.create({
+    ...userData,
+    status: "active",
+  });
+
+  await IdentityVerification.create({
+    userId: user._id,
+    frontIdImage: files?.frontIdImage?.[0],
+    backIdImage: files?.backIdImage?.[0],
+    selfieImage: files?.selfieImage?.[0],
+  });
+
+  if (user.role === "worker") {
+    await WorkerProfile.create({
+      userId: user._id,
+      ...workerData,
+      healthCertificate: files?.healthCertificate?.[0],
+    });
+  }
+
+  if (user.role === "employer") {
+    await EmployerProfile.create({
+      userId: user._id,
+      ...employerData,
+      companyImages: files?.companyImages,
+    });
+  }
+
+  await Verification.deleteOne({ _id: verification._id });
+
+  const token = createAuthToken(user);
+
+  res.status(200).json({
+    status: "success",
+    token,
+     
   });
 });
 
@@ -187,17 +178,22 @@ exports.login = asyncHandler(async (req, res) => {
     throw new ApiError("Incorrect email or password", 401);
   }
 
-  let workerProfile = null;
-  if (user.role === "worker") {
-    workerProfile = await WorkerProfile.findOne({ userId: user._id });
-  }
-  let employerProfile = null;
-  if (user.role === "employer") {
-    employerProfile = await EmployerProfile.findOne({ userId: user._id });
-  }
   const isMatch = await bcrypt.compare(password, user.password);
   if (!isMatch) {
     throw new ApiError("Incorrect email or password", 401);
+  }
+
+  if (user.status !== "active") {
+    throw new ApiError("Account not active. Please verify your email.", 403);
+  }
+
+  let worker= null;
+  if (user.role === "worker") {
+    worker = await WorkerProfile.findOne({ userId: user._id });
+  }
+  let employer = null;
+  if (user.role === "employer") {
+    employer = await EmployerProfile.findOne({ userId: user._id });
   }
 
   const token = createAuthToken(user);
@@ -209,7 +205,7 @@ exports.login = asyncHandler(async (req, res) => {
       id: user._id,
       data : {
         user,
-        profile: user.role === "worker" ? workerProfile : employerProfile,
+        profile: user.role === "worker" ? worker : employer,
       }
     },
   });
@@ -365,7 +361,8 @@ exports.getLoggedInUser = asyncHandler(async (req, res) => {
 
   res.status(200).json({  
     status: "success",
-    data:{user},
+    data:{user,
+      profile: employerProfile},
   });
   }
 });
