@@ -2,6 +2,7 @@ const asyncHandler = require("express-async-handler");
 
 const Job = require("../models/jobModel");
 const Application = require("../models/applicationModel");
+const IdentityVerification = require("../models/identityVerificationModel");
 const ApiError = require("../utils/apiError");
 const penaltyService = require("../services/penaltyService");
 const {
@@ -20,6 +21,13 @@ exports.createJob = asyncHandler(async (req, res) => {
   if (req.user.role !== "employer") {
     throw new ApiError("Only employers can create jobs", 403);
   }
+
+  const identityVerification = await IdentityVerification.findOne({
+    userId: employerId,
+  }).select("status");
+    if (!identityVerification || identityVerification.status !== "approved") {
+      throw new ApiError("Identity verification required to create jobs", 403);
+    }
 
   if (
     req.user.discipline?.blockedUntil &&

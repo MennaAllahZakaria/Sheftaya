@@ -8,15 +8,10 @@ const {
     getUser,
     deleteUser,
     updateStatusUser,
-    getAllTeachers,
-    getTeacher,
-    deleteTeacher,
-    getAllPendingTeachers,
-    verifyTeacher,
-    rejectTeacher,
-    getAllStudents,
-    getStudent,
-    deleteStudent
+    getAllIdentityVerifications,
+    verifyIdentity,
+    rejectIdentity
+    
 } = require("../services/adminService");
 
 const { protect , allowedTo } = require("../middleware/authMiddleware");
@@ -52,25 +47,13 @@ router.delete("/users/:id", idValidator, deleteUser);
 // 📌 Update user status
 router.patch("/users/:id/status", updateUserStatusValidator, updateStatusUser);
 
-//=======================Teacher Management=========================
-// 📌 Get all teachers
-router.get("/teachers/all", getAllTeachers);
-// 📌 Get all pending teachers
-router.get("/teachers/pending", getAllPendingTeachers);
-// 📌 Get specific teacher by id
-router.get("/teachers/:id", idValidator, getTeacher);
-// 📌 Delete teacher
-router.delete("/teachers/:id", idValidator, deleteTeacher);
-// 📌 Verify teacher
-router.put("/teachers/verify/:id", idValidator, verifyTeacher);
-// 📌 Reject teacher
-router.put("/teachers/reject/:id", idValidator, rejectTeacher);
+//=======================Identity Verification Management=========================
+// 📌 Get all identity verifications
+router.get("/identity-verifications", getAllIdentityVerifications);
+// 📌 Approve identity verification
+router.patch("/identity-verifications/:id/approve", idValidator, verifyIdentity);
+// 📌 Reject identity verification
+router.patch("/identity-verifications/:id/reject", idValidator, rejectIdentity);
 
-//=======================Student Management=========================
-// 📌 Get all students
-router.get("/students/all", getAllStudents);
-// 📌 Get specific student by id
-router.get("/students/:id", idValidator, getStudent);
-// 📌 Delete student
-router.delete("/students/:id", idValidator, deleteStudent);
+
 module.exports = router;

@@ -5,6 +5,7 @@ const Application = require("../models/applicationModel");
 const Job = require("../models/jobModel");
 const User = require("../models/userModel");
 const WorkerProfile = require("../models/workerProfileModel");
+const identityVerification = require("../models/identityVerificationModel");
 const ApiError = require("../utils/apiError");
 const penaltyService = require("../services/penaltyService");
 const {
@@ -24,6 +25,13 @@ exports.applyForJob = asyncHandler(async (req, res) => {
 
   if (req.user.role !== "worker") {
     throw new ApiError("Only workers can apply", 403);
+  }
+  const identityVerification = await IdentityVerification.findOne({
+    userId: workerId,
+  }).select("status");
+
+  if (!identityVerification || identityVerification.status !== "approved") {
+    throw new ApiError("Identity verification required to apply for jobs", 403);
   }
 
   if (
@@ -73,9 +81,9 @@ exports.applyForJob = asyncHandler(async (req, res) => {
 
       await sendNotificationNow({
         userId: job.employerId._id,
-        type: "job_applied",
-        title: "New Job Application",
-        message: `${req.user.firstName} ${req.user.lastName} applied for your job "${job.title}".`,
+        type: "عامل جديد قدم لوظيفتك",
+        title: "عامل جديد قدم لوظيفتك",
+        message: `تم التقديم لوظيفتك من قبل ${req.user.firstName} ${req.user.lastName}. يرجى تسجيل الدخول إلى حسابك لمراجعة الطلب.`,
         relatedJobId: job._id,
       });
   }else{

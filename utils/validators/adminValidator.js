@@ -17,10 +17,6 @@ exports.createAdminValidator = [
         .withMessage("Email is required")
         .isEmail()
         .withMessage("Invalid email format"),
-    check("phone")
-        .optional()
-        .isMobilePhone()
-        .withMessage("Invalid phone number"),
     validatorMiddleware,
 ];
 
@@ -42,10 +38,6 @@ exports.updateAdminValidator = [
         .optional()
         .isLength({ min: 2 })
         .withMessage("Last name must be at least 2 characters"),
-    check("phone")
-        .optional()
-        .isMobilePhone()
-        .withMessage("Invalid phone number"),
     validatorMiddleware,
 ];
 
