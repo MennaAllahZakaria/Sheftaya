@@ -50,6 +50,9 @@ const userSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    phone :{
+      type: String,
+    },
 
     birthDate: {
       type: Date,

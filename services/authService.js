@@ -12,7 +12,6 @@ const IdentityVerification = require("../models/identityVerificationModel");
 
 const ApiError = require("../utils/apiError");
 const sendEmail = require("../utils/sendEmail");
-const { profile } = require("console");
 
 /* ===================== Helpers ===================== */
 
@@ -54,6 +53,8 @@ exports.signup = asyncHandler(async (req, res) => {
     lastName,
     email,
     password,
+    phone,
+    birthDate,
     role,
     city,
     workerProfile,
@@ -77,6 +78,8 @@ exports.signup = asyncHandler(async (req, res) => {
         firstName,
         lastName,
         email,
+        phone,
+        birthDate,
         password: hashedPassword,
         role,
         city,

@@ -12,24 +12,20 @@ const employerProfileSchema = new mongoose.Schema(
 
     companyName: {
       type: String,
-      required: true,
       index: true,
     },
 
     companyType: {
       type: String,
-      required: true,
       index: true,
     },
 
     companyAddress: {
       type: String,
-      required: true,
     },
 
     city: {
       type: String,
-      required: true,
       index: true,
     },
 
