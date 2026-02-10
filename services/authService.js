@@ -61,34 +61,104 @@ exports.signup = asyncHandler(async (req, res) => {
     employerProfile,
   } = req.body;
 
-  const files = req.uploadedFiles || {};
+  /* =========================
+     BASIC VALIDATION FIRST
+  ========================== */
+
+
+  if (!email || !password) {
+    throw new ApiError("Email and password are required", 400);
+  }
+
+  // already active user
+  const existingUser = await User.findOne({ email });
+
+  if (existingUser) {
+    throw new ApiError("Email already registered", 400);
+  }
+
+  if (password.length < 8) {
+    throw new ApiError("Password must be at least 8 characters", 400);
+  }
+
+  if (!["worker", "employer"].includes(role)) {
+    throw new ApiError("Invalid role", 400);
+  }
+
+  /* =========================
+     PARSE JSON SAFELY
+  ========================== */
+
+  const workerData =
+    typeof workerProfile === "string"
+      ? JSON.parse(workerProfile)
+      : workerProfile;
+
+  const employerData =
+    typeof employerProfile === "string"
+      ? JSON.parse(employerProfile)
+      : employerProfile;
+
+  const files = { ...(req.uploadedFiles || {}) };
+
+  /* =========================
+     HASH PASSWORD LAST
+  ========================== */
 
   const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS);
 
   const otp = generateOtp();
 
-  await Verification.create({
-    email,
-    code: hashOtp(otp),
-    type: "emailVerification",
-    expiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
+  /* =========================
+     CHECK EXISTING VERIFICATION
+  ========================== */
 
-    payload: {
-      userData: {
-        firstName,
-        lastName,
-        email,
-        phone,
-        birthDate,
-        password: hashedPassword,
-        role,
-        city,
+  let verification = await Verification.findOne({
+    email,
+    type: "emailVerification",
+  }).select("+payload");
+
+  const now = Date.now();
+
+  if (verification) {
+    // rate limit resend (30 sec)
+    if (
+      verification.lastSentAt &&
+      now - verification.lastSentAt.getTime() < 30_000
+    ) {
+      throw new ApiError("Please wait before requesting another code", 429);
+    }
+
+    await Verification.findByIdAndDelete(verification._id);
+    console.log ("delete old")
+  } 
+    verification = await Verification.create({
+      email,
+      code: hashOtp(otp),
+      type: "emailVerification",
+      expiresAt: new Date(now + OTP_EXPIRY_MS),
+      lastSentAt: new Date(),
+      payload: {
+        userData: {
+          firstName,
+          lastName,
+          email,
+          phone,
+          birthDate,
+          password: hashedPassword,
+          role,
+          city,
+        },
+        workerData,
+        employerData,
+        files,
       },
-      workerData: workerProfile,
-      employerData: employerProfile,
-      files,
-    },
-  });
+    });
+  
+
+  /* =========================
+     SEND EMAIL ONCE
+  ========================== */
 
   await sendEmail({
     Email: email,
@@ -96,12 +166,12 @@ exports.signup = asyncHandler(async (req, res) => {
     message: `Your code is ${otp}`,
   });
 
-  res.status(200).json({ 
+  res.status(200).json({
     status: "success",
-    message: "Signup request received. Please verify your email with the OTP sent." 
+    message: "Signup request received. Please verify your email with the OTP sent.",
   });
-     
 });
+
 
 // ===================== RESEND OTP =====================
 
