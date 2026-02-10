@@ -445,7 +445,7 @@ exports.resetPassword = asyncHandler(async (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
   const { newPassword } = req.body;
 
-  const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  const decoded = jwt.verify(token, process.env.JWT_SECRET_KEY);
   if (decoded.type !== "reset") {
     throw new ApiError("Invalid token", 401);
   }
