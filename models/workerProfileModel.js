@@ -16,7 +16,6 @@ const workerProfileSchema = new mongoose.Schema(
 
     professionalStatus: {
       type: String,
-      enum: ["student", "full_time", "part_time", "unemployed", "other"],
       default: "student",
     },
 
