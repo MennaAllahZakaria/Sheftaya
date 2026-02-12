@@ -1,25 +1,21 @@
 const validatorMiddleware = require("../../middleware/validatorMiddleware");
 
 // validations/authValidation.js
-const { body, param } = require("express-validator");
+const { check,body, param } = require("express-validator");
 
 exports.createJobValidator = [
-    body("title")
+    check("title")
         .trim()
         .notEmpty()
         .withMessage("Job title is required"),
-    body("place")
+    check("place")
         .trim()
         .notEmpty()
         .withMessage("Job place is required"),
-    body("location")
-        .trim()
-        .notEmpty()
-        .withMessage("Job location is required"),
-    body("startDateTime")
+    check("startDateTime")
         .isISO8601()
         .withMessage("Invalid start date and time"),
-    body("endDateTime")
+    check("endDateTime")
         .isISO8601()
         .withMessage("Invalid end date and time")
         .custom((value, { req }) => {
@@ -28,24 +24,22 @@ exports.createJobValidator = [
             }
             return true;
         }),
-    body("dailyWorkHours")
+    check("dailyWorkHours")
         .isInt({ min: 1, max: 24 })
         .withMessage("Daily work hours must be between 1 and 24"),
-    body("pricePerHour.amount")
+    check("pricePerHour.amount")
         .isFloat({ gt: 0 })
         .withMessage("Price per hour must be a positive number"),
-    body("pricePerHour.currency")
-        .isCurrency()
-        .withMessage("Invalid currency format"),
+
     
-    body("requiredWorkers")
+    check("requiredWorkers")
         .isInt({ min: 1 })
         .withMessage("At least one worker is required"),
-    body("details")
+    check("details")
         .trim()
         .notEmpty()
         .withMessage("Job details are required"),
-    body("experienceLevel")
+    check("experienceLevel")
         .isIn(["none", "junior", "mid", "senior"])
         .withMessage("Invalid experience level"),
     validatorMiddleware
@@ -66,43 +60,43 @@ exports.updateJobValidator=[
         .withMessage("Job ID is required")
         .isMongoId()
         .withMessage("Invalid job ID"),
-    body("title")   
+    check("title")   
         .optional()
         .trim(),
-    body("place")
+    check("place")
         .optional() 
         .trim(),
-    body("location")
+    check("location")
         .optional() 
         .trim(),
-    body("startDateTime")
+    check("startDateTime")
         .optional() 
         .isISO8601()
         .withMessage("Invalid start date and time"),
-    body("endDateTime")
+    check("endDateTime")
         .optional() 
         .isISO8601()
         .withMessage("Invalid end date and time")
         .custom((value, { req }) => {
-            if (req.body.startDateTime && new Date(value) <= new Date(req.body.startDateTime)) {
+            if (req.check.startDateTime && new Date(value) <= new Date(req.check.startDateTime)) {
                 throw new Error("End date and time must be after start date and time");
             }
             return true;
         }),
-    body("dailyWorkHours")
+    check("dailyWorkHours")
         .optional()
         .isInt({ min: 1, max: 24 })
         .withMessage("Daily work hours must be between 1 and 24"),
-    body("requiredWorkers") 
+    check("requiredWorkers") 
         .optional()
         .isInt({ min: 1 })
         .withMessage("At least one worker is required"),
-    body("details")
+    check("details")
         .optional()
         .trim()
         .notEmpty()
         .withMessage("Job details are required"),
-    body("experienceLevel")
+    check("experienceLevel")
         .optional()
         .isIn(["none", "junior", "mid", "senior"])
         .withMessage("Invalid experience level"),

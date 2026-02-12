@@ -22,17 +22,10 @@ const jobSchema = new mongoose.Schema(
     },
 
     location: {
-      city: {
-        type: String,
-        required: true,
-        index: true,
-      },
-      address: {
-        type: String,
-        required: true,
-      },
-      lat: Number,
-      lng: Number,
+      type: { type: String, enum: ["Point"], default: "Point" },
+      coordinates: { type: [Number], required: true }, // [longitude, latitude]
+      mainPlace: String,
+      address: String,
     },
 
     startDateTime: {

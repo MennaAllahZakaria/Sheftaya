@@ -25,6 +25,25 @@ const {
 
 const router = express.Router();
 
+router.use(protect, allowedTo("admin"));
+
+//=======================Identity Verification Management=========================
+// 📌 Get all identity verifications
+router.get("/identity-verifications", getAllIdentityVerifications);
+// 📌 Approve identity verification
+router.patch("/identity-verifications/:id/approve", idValidator, verifyIdentity);
+// 📌 Reject identity verification
+router.patch("/identity-verifications/:id/reject", idValidator, rejectIdentity);
+
+//=======================User Management=========================
+// 📌 Get  user
+router.get("/users/:id", idValidator, getUser);
+// 📌 Delete user
+router.delete("/users/:id", idValidator, deleteUser);
+// 📌 Update user status
+router.patch("/users/:id/status", updateUserStatusValidator, updateStatusUser);
+
+
 // ================= ADMIN =================
 
 router.use(protect, allowedTo("admin"));
@@ -39,21 +58,6 @@ router.delete("/:id", idValidator, deleteAdmin);
 // 📌 Update admin
 router.put("/:id", updateAdminValidator, updateAdmin);
 
-//=======================User Management=========================
-// 📌 Get  user
-router.get("/users/:id", idValidator, getUser);
-// 📌 Delete user
-router.delete("/users/:id", idValidator, deleteUser);
-// 📌 Update user status
-router.patch("/users/:id/status", updateUserStatusValidator, updateStatusUser);
-
-//=======================Identity Verification Management=========================
-// 📌 Get all identity verifications
-router.get("/identity-verifications", getAllIdentityVerifications);
-// 📌 Approve identity verification
-router.patch("/identity-verifications/:id/approve", idValidator, verifyIdentity);
-// 📌 Reject identity verification
-router.patch("/identity-verifications/:id/reject", idValidator, rejectIdentity);
 
 
 module.exports = router;
