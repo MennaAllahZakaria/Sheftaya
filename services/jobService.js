@@ -83,7 +83,7 @@ exports.createJob = asyncHandler(async (req, res) => {
     pricePerHour,
     experienceLevel,
     details,
-    status: "draft",
+    status: "open",
     payment: {
       method: paymentMethod,
       status: "pending",

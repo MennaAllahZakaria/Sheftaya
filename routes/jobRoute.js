@@ -48,6 +48,13 @@ router.get(
     allowedTo("worker"),
     getOpenJobs
 );
+// Get My Jobs - Worker & Employer
+router.get(
+    "/my-jobs",
+    protect,
+    allowedTo("worker", "employer"),
+    getMyJobs
+);
 // Get Job Details - Worker & Employer
 router.get(
     "/:id",
@@ -56,13 +63,7 @@ router.get(
     idValidator,
     getJobDetails
 );
-// Get My Jobs - Worker & Employer
-router.get(
-    "/my-jobs",
-    protect,
-    allowedTo("worker", "employer"),
-    getMyJobs
-);
+
 // Update Job - Employer
 router.put(
     "/:id",
