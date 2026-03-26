@@ -3,6 +3,7 @@ const asyncHandler = require("express-async-handler");
 const Job = require("../models/jobModel");
 const Application = require("../models/applicationModel");
 const IdentityVerification = require("../models/identityVerificationModel");
+const WorkerProfile = require("../models/workerProfileModel");
 const ApiError = require("../utils/apiError");
 const penaltyService = require("../services/penaltyService");
 const {
@@ -142,25 +143,109 @@ exports.activateJob = asyncHandler(async (req, res) => {
 ===================================================== */
 
 exports.getOpenJobs = asyncHandler(async (req, res) => {
-  const { city, dateFrom, dateTo, experienceLevel } = req.query;
+  let {
+    page = 1,
+    limit = 10,
+    sort = "startDateTime",
+    city,
+    experienceLevel,
+    minPrice,
+    maxPrice,
+    dateFrom,
+    dateTo,
+    lat,
+    lng,
+    radius = 5000, // بالمتر
+  } = req.query;
+
+  /* ================= SANITIZE ================= */
+
+  page = Math.max(1, parseInt(page));
+  limit = Math.min(50, parseInt(limit));
+
+  const skip = (page - 1) * limit;
+
+  /* ================= FILTER ================= */
 
   const filter = { status: "open" };
 
-  if (city) filter["location.city"] = city;
-  if (experienceLevel) filter.experienceLevel = experienceLevel;
+  // city search (fallback لو مفيش geo)
+  if (city) {
+    filter["location.address"] = { $regex: city, $options: "i" };
+  }
 
+  // experience
+  if (experienceLevel) {
+    filter.experienceLevel = experienceLevel;
+  }
+
+  // price
+  if (minPrice || maxPrice) {
+    filter["pricePerHour.amount"] = {};
+    if (minPrice) filter["pricePerHour.amount"].$gte = Number(minPrice);
+    if (maxPrice) filter["pricePerHour.amount"].$lte = Number(maxPrice);
+  }
+
+  // date
   if (dateFrom || dateTo) {
     filter.startDateTime = {};
     if (dateFrom) filter.startDateTime.$gte = new Date(dateFrom);
     if (dateTo) filter.startDateTime.$lte = new Date(dateTo);
   }
 
-  const jobs = await Job.find(filter).sort({ startDateTime: 1 });
+  // 🔥 GEO FILTER (الأهم)
+  if (lat && lng) {
+    filter.location = {
+      $near: {
+        $geometry: {
+          type: "Point",
+          coordinates: [parseFloat(lng), parseFloat(lat)],
+        },
+        $maxDistance: parseInt(radius),
+      },
+    };
+  }
+
+  /* ================= SORT ================= */
+
+  const allowedSortFields = [
+    "startDateTime",
+    "-startDateTime",
+    "pricePerHour.amount",
+    "-pricePerHour.amount",
+  ];
+
+  if (!allowedSortFields.includes(sort)) {
+    sort = "startDateTime";
+  }
+
+  /* ================= QUERY ================= */
+
+  const jobsQuery = Job.find(filter)
+    .select(
+      "title place location startDateTime pricePerHour experienceLevel status"
+    )
+    .sort(sort)
+    .skip(skip)
+    .limit(limit)
+    .lean(); // 🔥 مهم
+
+  const [jobs, total] = await Promise.all([
+    jobsQuery,
+    Job.countDocuments(filter),
+  ]);
+
+  /* ================= RESPONSE ================= */
 
   res.status(200).json({
     status: "success",
+    page,
     results: jobs.length,
-    data: jobs
+    totalResults: total,
+    totalPages: Math.ceil(total / limit),
+    hasNextPage: page * limit < total,
+    hasPrevPage: page > 1,
+    data: jobs,
   });
 });
 
@@ -422,5 +507,80 @@ exports.confirmCompletion = asyncHandler(async (req, res) => {
     status: "success",
     message: "Completion confirmed",
     data: job
+  });
+});
+
+
+const axios = require("axios");
+
+exports.getRecommendations = async (worker, jobs) => {
+  try {
+    const response = await axios.post(
+      "https://recommendation-system-shiftaya-production.up.railway.app/recommend",
+      {
+        worker,
+        jobs,
+      },
+      {
+        headers: {
+          "x-api-key": process.env.AI_API_KEY,
+          "Content-Type": "application/json",
+        },
+        timeout: 5000, 
+      }
+    );
+
+    return response.data;
+  } catch (error) {
+    console.error("AI ERROR:", error.response?.data || error.message);
+    throw new Error("Recommendation service failed");
+  }
+};
+
+exports.getRecommendedJobs = asyncHandler(async (req, res) => {
+  const userId = req.user._id;
+
+  /* ================= WORKER ================= */
+
+  const worker = await WorkerProfile.findOne({ userId }).lean();
+
+  if (!worker) {
+    throw new ApiError("Worker profile not found", 404);
+  }
+
+  /* ================= JOBS ================= */
+
+  const jobs = await Job.find({ status: "open" })
+    .select("title pricePerHour experienceLevel location details")
+    .lean();
+
+  if (!jobs.length) {
+    return res.status(200).json({
+      status: "success",
+      data: {
+        recommendations: [],
+      },
+    });
+  }
+
+  /* ================= AI CALL ================= */
+
+  let recommendations;
+
+  try {
+    const aiResponse = await getRecommendations(worker, jobs);
+    recommendations = aiResponse.recommendations;
+  } catch (err) {
+    console.warn("AI fallback activated");
+
+    recommendations = jobs.slice(0, 10);
+  }
+
+  /* ================= RESPONSE ================= */
+
+  res.status(200).json({
+    status: "success",
+    results: recommendations.length,
+    data: recommendations,
   });
 });

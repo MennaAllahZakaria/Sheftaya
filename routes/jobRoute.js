@@ -9,6 +9,7 @@ const {
     updateJob,
     cancelJob,
     confirmCompletion,
+    getRecommendedJobs,
 
 }= require("../services/jobService");
 // Validation
@@ -32,6 +33,13 @@ router.post(
     allowedTo("employer"),
     createJobValidator,
     createJob
+);
+// Get Recommended Jobs - Worker
+router.get(
+    "/recommendations",
+    protect,
+    allowedTo("worker"),
+    getRecommendedJobs
 );
 // Get Open Jobs - Worker
 router.get(
@@ -80,4 +88,7 @@ router.put(
     idValidator,
     confirmCompletion
 );
+
+
+
 module.exports = router;

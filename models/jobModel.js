@@ -70,7 +70,6 @@ const jobSchema = new mongoose.Schema(
 
     experienceLevel: {
       type: String,
-      enum: ["none", "junior", "mid", "senior"],
       default: "none",
       index: true,
     },
@@ -154,7 +153,8 @@ const jobSchema = new mongoose.Schema(
 
 /* ============ Indexes ============ */
 
-// البحث الشائع: شغل متاح في مدينة + تاريخ
+jobSchema.index({ location: "2dsphere" }); 
+
 jobSchema.index({ "location.city": 1, startDateTime: 1 });
 
 // منع Jobs في الماضي تتساب مفتوحة
