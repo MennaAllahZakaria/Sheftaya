@@ -27,6 +27,8 @@ const {
 // Auth & Authorization
 const { protect, allowedTo } = require("../middleware/authMiddleware");
 
+const parseFormDataMiddleware = require("../middleware/parseFormDataMiddleware")
+
 /* =====================================================
    JOB ROUTES
 ===================================================== */
@@ -36,6 +38,7 @@ router.post(
     protect,
     allowedTo("employer"),
     uploadImagesAndFiles , attachUploadedLinks,
+    parseFormDataMiddleware,
     createJobValidator,
     createJob
 );
