@@ -12,6 +12,10 @@ const {
     getRecommendedJobs,
 
 }= require("../services/jobService");
+
+//upload controller
+const {uploadImagesAndFiles , attachUploadedLinks} = require("../middleware/uploadFileMiddleware");
+
 // Validation
 
 const {
@@ -31,6 +35,7 @@ router.post(
     "/",
     protect,
     allowedTo("employer"),
+    uploadImagesAndFiles , attachUploadedLinks,
     createJobValidator,
     createJob
 );

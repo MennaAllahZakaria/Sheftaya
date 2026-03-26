@@ -18,6 +18,7 @@ const {sendEmail}= require("../utils/sendEmail");
 
 exports.createJob = asyncHandler(async (req, res) => {
   const employerId = req.user._id;
+  const files = { ...(req.uploadedFiles || {}) };
 
   if (req.user.role !== "employer") {
     throw new ApiError("Only employers can create jobs", 403);
@@ -48,7 +49,8 @@ exports.createJob = asyncHandler(async (req, res) => {
     pricePerHour,
     experienceLevel,
     details,
-    paymentMethod
+    paymentMethod,
+    requiredSkills,
   } = req.body;
 
   if (!title || !place || !location || !startDateTime || !endDateTime) {
@@ -83,6 +85,8 @@ exports.createJob = asyncHandler(async (req, res) => {
     pricePerHour,
     experienceLevel,
     details,
+    requiredSkills,
+    JobImages: files?.JobImages,
     status: "open",
     payment: {
       method: paymentMethod,
@@ -223,7 +227,7 @@ exports.getOpenJobs = asyncHandler(async (req, res) => {
 
   const jobsQuery = Job.find(filter)
     .select(
-      "title place location startDateTime pricePerHour experienceLevel status"
+      "title place location startDateTime dailyWorkHours pricePerHour experienceLevel status requiredSkills JobImages"
     )
     .sort(sort)
     .skip(skip)

@@ -15,6 +15,17 @@ const jobSchema = new mongoose.Schema(
       trim: true,
     },
 
+
+    requiredSkills: {
+      type: [String],
+      index: true,
+    },
+
+    JobImages: {
+      type: [String],
+      default: [],
+    },
+
     place: {
       type: String,
       required: true,

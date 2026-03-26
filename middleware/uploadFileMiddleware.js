@@ -33,6 +33,11 @@ const storage = new CloudinaryStorage({
       resource_type = "image";
     }
 
+    else if (file.fieldname === "JobImages") {
+      folder = "Job_Images";
+      resource_type = "image";
+    } 
+
     return {
       folder,
       resource_type,
@@ -71,6 +76,11 @@ const fileFilter = (req, file, cb) => {
     return cb(new ApiError("Only images allowed for companyImages", 400), false);
   }
 
+  // Job images → images only
+  if (file.fieldname === "JobImages" && !isImage) {
+    return cb(new ApiError("Only images allowed for JobImages", 400), false);
+  }
+
   cb(null, true);
 };
 
@@ -96,6 +106,7 @@ exports.uploadImagesAndFiles = upload.fields([
   { name: "selfieImage", maxCount: 1 },
   { name: "healthCertificate", maxCount: 1 },
   { name: "companyImages", maxCount: 5 },
+  { name: "JobImages", maxCount: 5 },
 ]);
 
 /* =================================================
