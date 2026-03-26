@@ -50,6 +50,25 @@ const applicationSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    shiftStatus: {
+      type: String,
+      enum: [
+        "not_started",
+        "on_the_way",
+        "arrived",
+        "arrived_approved",
+        "in_progress",
+        "completed"
+      ],
+      default: "not_started",
+      index: true,
+    },
+
+    onTheWayAt: Date,
+    arrivedAt: Date,
+    arrivalApprovedAt: Date,
+    shiftStartedAt: Date,
+    shiftEndedAt: Date,
   },
   { timestamps: true }
 );

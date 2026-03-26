@@ -1,65 +1,63 @@
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+});
+
 const express = require("express");
 const dotenv = require("dotenv");
 const path = require("path");
-const ApiError = require("./utils/apiError");
+const http = require("http");
+
 dotenv.config({ path: "config.env" });
+
 const morgan = require("morgan");
 const cors = require("cors");
 const compression = require("compression");
+const cron = require("node-cron");
+
 const mountRoutes = require("./routes/index");
 const globalError = require("./middleware/errorMiddleware");
 const dbConnection = require("./config/database");
-const {startNotificationCron} = require("./cornJobs/notificationCron");
-// //Routes
-// // const mountRoutes = require("./routes");
-//connect with db
-dbConnection();
+const { initSocket } = require("./config/socket");
 
-// //express app
 const app = express();
 
-// Enable other domains to access your application
+/* DB */
+dbConnection()
+
+/* MIDDLEWARE */
 app.use(cors());
-
-// compress all responses
 app.use(compression());
-
-//Middleware
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));// form-data 
-app.use(express.static(path.join(__dirname, "uploads"))); // /name photo => in localhost
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, "uploads")));
 
-if (process.env.NODE_ENV == "development") {
+if (process.env.NODE_ENV === "development") {
   app.use(morgan("dev"));
-  console.log(process.env.NODE_ENV);
 }
 
-
-
-//Mount Routes
-    mountRoutes(app);
-
-// Start cron jobs
-// startNotificationCron();
-
-// app.all("*", (req, res, next) => {
-//   //Create error and send it to error handling middleware
-//   next(new ApiError(`Can't find this route: ${req.originalUrl}`, 400));
-// });
-
-//Global error handling middleware for express
+/* ROUTES */
+mountRoutes(app);
 app.use(globalError);
 
+/* SERVER */
+const server = http.createServer(app);
+initSocket(server);
+
+/* CRON JOBS */
+
+
+
 const PORT = process.env.PORT || 8000;
-const server = app.listen(PORT, () => {
+
+server.listen(PORT, () => {
   console.log(`App running on port ${PORT}`);
 });
 
-//handle rejection outside express
+/* PROMISE ERRORS */
 process.on("unhandledRejection", (err) => {
-  console.error(`unhandledRejection: ${err.name} | ${err.message}`);
-  server.close(() => {
-    console.error(`Shutting down...`);
-    process.exit(1);
-  });
+  console.error("Unhandled Rejection:", err);
+
+  if (process.env.NODE_ENV === "production") {
+    server.close(() => process.exit(1));
+  }
 });
