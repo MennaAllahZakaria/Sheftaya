@@ -317,12 +317,13 @@ exports.getMyJobs = asyncHandler(async (req, res) => {
 /* =====================================================
    UPDATE JOB (Employer)
 ===================================================== */
-
 exports.updateJob = asyncHandler(async (req, res) => {
   const jobId = req.params.id;
 
   const job = await Job.findById(jobId);
   if (!job) throw new ApiError("Job not found", 404);
+
+  /* ================= AUTH ================= */
 
   if (!job.employerId.equals(req.user._id)) {
     throw new ApiError("Unauthorized", 403);
@@ -341,13 +342,14 @@ exports.updateJob = asyncHandler(async (req, res) => {
     throw new ApiError("Job cannot be updated less than 24 hours before start", 400);
   }
 
+  /* ================= UPDATE BASIC FIELDS ================= */
+
   const allowedFields = [
     "title",
     "place",
     "location",
     "startDateTime",
     "endDateTime",
-    "dailyWorkHours",
     "requiredWorkers",
     "experienceLevel",
     "details"
@@ -359,13 +361,36 @@ exports.updateJob = asyncHandler(async (req, res) => {
     }
   });
 
+  /* ================= TIME LOGIC ================= */
+
+  let start = new Date(job.startDateTime);
+  let end = new Date(job.endDateTime);
+
+  
+  if (req.body.startDateTime || req.body.endDateTime) {
+    if (end <= start) {
+      throw new ApiError("End time must be after start time", 400);
+    }
+
+    const hours = (end - start) / (1000 * 60 * 60);
+
+    if (!Number.isFinite(hours) || hours <= 0 || hours > 24) {
+      throw new ApiError("Invalid working hours", 400);
+    }
+
+    job.dailyWorkHours = hours;
+  }
+
+  /* ================= PRICE & PAYMENT ================= */
+
   if (
     req.body.requiredWorkers ||
-    req.body.dailyWorkHours ||
-    req.body.pricePerHour
+    req.body.pricePerHour ||
+    req.body.startDateTime ||
+    req.body.endDateTime
   ) {
     const price = req.body.pricePerHour || job.pricePerHour;
-    const hours = req.body.dailyWorkHours || job.dailyWorkHours;
+    const hours = job.dailyWorkHours;
     const workers = req.body.requiredWorkers || job.requiredWorkers;
 
     if (
@@ -374,11 +399,10 @@ exports.updateJob = asyncHandler(async (req, res) => {
       !price?.amount ||
       !Number.isFinite(price.amount)
     ) {
-      throw new ApiError("Invalid updated pricing or hours data", 400);
+      throw new ApiError("Invalid pricing or hours data", 400);
     }
 
     job.pricePerHour = price;
-    job.dailyWorkHours = hours;
     job.requiredWorkers = workers;
     job.payment.totalAmount = price.amount * hours * workers;
   }
