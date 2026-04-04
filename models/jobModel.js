@@ -91,13 +91,13 @@ const jobSchema = new mongoose.Schema(
     },
 
     companyDetails: {
-      name: String,
-      type: String,
-      address: String,
-      city: String,
-      taxNumber: String,
-      commercialRegisterNumber: String,
-      contactPersonName: String,
+      companyName: { type: String },
+      companyType: { type: String },
+      companyAddress: { type: String },
+      companyCity: { type: String },
+      companyTaxNumber: { type: String },
+      companyCommercialRegisterNumber: { type: String },
+      companyContactPersonName: { type: String },
       companyImages: [String],
     },
 
