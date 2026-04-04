@@ -104,7 +104,7 @@ exports.createJob = asyncHandler(async (req, res) => {
     requiredSkills,
     JobImages: files?.JobImages,
     companyDetails: companyDetails || {},
-    status: "open",
+    status: "active",
     payment: {
       method: paymentMethod,
       status: "pending",
@@ -148,22 +148,22 @@ exports.activateJob = asyncHandler(async (req, res) => {
   }
 
   job.payment.status = "held";
-  job.status = "open";
+  job.status = "active";
 
   await job.save();
 
   res.status(200).json({
     status: "success",
-    message: "Job activated and open for applications",
+    message: "Job activated and active for applications",
     data: job
   });
 });
 
 /* =====================================================
-   LIST OPEN JOBS (Workers)
+   LIST active JOBS (Workers)
 ===================================================== */
 
-exports.getOpenJobs = asyncHandler(async (req, res) => {
+exports.getActiveJobs = asyncHandler(async (req, res) => {
   let {
     page = 1,
     limit = 10,
@@ -188,7 +188,7 @@ exports.getOpenJobs = asyncHandler(async (req, res) => {
 
   /* ================= FILTER ================= */
 
-  const filter = { status: "open" };
+  const filter = { status: "active" };
 
   // city search (fallback لو مفيش geo)
   if (city) {
@@ -595,7 +595,7 @@ exports.getRecommendedJobs = asyncHandler(async (req, res) => {
 
   /* ================= JOBS ================= */
 
-  const jobs = await Job.find({ status: "open" })
+  const jobs = await Job.find({ status: "active" })
     .select("title pricePerHour experienceLevel location details")
     .lean();
 

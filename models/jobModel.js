@@ -104,16 +104,14 @@ const jobSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: [
-        "draft",        // لسه متدفعش
-        "open",         // مفتوح للتقديم
-        "confirmed",    // قبل الشغل بوقت قصير
-        "filled",       // العدد اكتمل
-        "in_progress",  // الشغل بدأ
-        "completed",    // الشغل خلص
-        "cancelled",    // اتلغى
-        "disputed",     // نزاع
+          "active",
+          "completed",
+          "rejected",
+          "accepted",
+          "reportResolved",
+          "reportUnderReview",
       ],
-      default: "draft",
+      default: "active",
       index: true,
     },
 

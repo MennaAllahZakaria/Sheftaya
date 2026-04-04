@@ -3,7 +3,7 @@ const router = express.Router();
 
 const {
     createJob,
-    getOpenJobs,
+    getActiveJobs,
     getJobDetails,
     getMyJobs,
     updateJob,
@@ -49,12 +49,12 @@ router.get(
     allowedTo("worker"),
     getRecommendedJobs
 );
-// Get Open Jobs - Worker
+// Get Active Jobs - Worker
 router.get(
     "/open",
     protect,
     allowedTo("worker"),
-    getOpenJobs
+    getActiveJobs
 );
 // Get My Jobs - Worker & Employer
 router.get(
