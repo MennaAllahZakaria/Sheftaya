@@ -1,5 +1,3 @@
-
-module.exports = sendEmail;
 const { google } = require("googleapis");
 
 const sendEmail = async ({ Email, subject, message }) => {
