@@ -51,6 +51,7 @@ exports.createJob = asyncHandler(async (req, res) => {
     details,
     paymentMethod,
     requiredSkills,
+    companyDetails
   } = req.body;
 
   if (!title || !place || !location || !startDateTime || !endDateTime) {
@@ -73,6 +74,21 @@ exports.createJob = asyncHandler(async (req, res) => {
   const totalAmount =
     dailyWorkHours * requiredWorkers * pricePerHour.amount;
 
+  if (totalAmount <= 0) {
+    throw new ApiError("Total job cost must be greater than zero", 400);
+  }
+
+  if (companyDetails) {
+    if (typeof companyDetails !== "object") {
+      throw new ApiError("Invalid company details format", 400);
+    }
+    if (companyDetails.name && typeof companyDetails.name !== "string") {
+      throw new ApiError("Company name must be a string", 400);
+    }
+
+    companyDetails.companyImages = files?.companyImages || [];
+  }
+
   const job = await Job.create({
     employerId,
     title,
@@ -87,6 +103,7 @@ exports.createJob = asyncHandler(async (req, res) => {
     details,
     requiredSkills,
     JobImages: files?.JobImages,
+    companyDetails: companyDetails || {},
     status: "open",
     payment: {
       method: paymentMethod,

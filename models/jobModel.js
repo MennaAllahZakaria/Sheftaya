@@ -90,6 +90,17 @@ const jobSchema = new mongoose.Schema(
       trim: true,
     },
 
+    companyDetails: {
+      name: String,
+      type: String,
+      address: String,
+      city: String,
+      taxNumber: String,
+      commercialRegisterNumber: String,
+      contactPersonName: String,
+      companyImages: [String],
+    },
+
     status: {
       type: String,
       enum: [
