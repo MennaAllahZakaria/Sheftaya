@@ -6,3 +6,5 @@ config.env
 .vscode
 
 sheftaya-cf32e-firebase-adminsdk-fbsvc-aa00c52a31.json
+
+test.js

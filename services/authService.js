@@ -101,6 +101,10 @@ exports.signup = asyncHandler(async (req, res) => {
 
   const files = { ...(req.uploadedFiles || {}) };
 
+  if (!files.frontIdImage || !files.selfieImage || !files.backIdImage) {
+    throw new ApiError("All ID images are required", 400);
+  }
+
   /* =========================
      HASH PASSWORD LAST
   ========================== */
