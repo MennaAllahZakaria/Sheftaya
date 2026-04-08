@@ -5,13 +5,15 @@ const Application = require("../models/applicationModel");
 const Job = require("../models/jobModel");
 const User = require("../models/userModel");
 const WorkerProfile = require("../models/workerProfileModel");
-const identityVerification = require("../models/identityVerificationModel");
+const IdentityVerification = require("../models/identityVerificationModel");
 const ApiError = require("../utils/apiError");
 const penaltyService = require("../services/penaltyService");
 const {
   sendNotificationNow,
   scheduleNotification
 } = require("../services/notificationService");
+
+const {handleWorkerAcceptedNotifications , handleWorkerRejectedNotifications } = require("../utils/notificationHandler");
 
 const {sendEmail}= require("../utils/sendEmail");
 
@@ -50,7 +52,7 @@ exports.applyForJob = asyncHandler(async (req, res) => {
     throw new ApiError("Job already filled", 400);
   }
 
-  // منع التداخل في المواعيد
+  // check for time conflicts with already accepted jobs
   const conflicts = await Application.find({
     workerId,
     status: "accepted",
@@ -75,6 +77,11 @@ exports.applyForJob = asyncHandler(async (req, res) => {
     jobId,
     workerId,
   });
+
+  // increment applicants count
+  job.applicantsCount += 1;
+  await job.save();
+
 
   // notify employer
   if (job.employerId.fcmTokens && job.employerId.fcmTokens.length > 0) {
@@ -145,53 +152,17 @@ exports.acceptWorker = asyncHandler(async (req, res) => {
     await job.save({ session });
     await session.commitTransaction();
 
-      // notify worker
-      if (application.workerId.fcmTokens && application.workerId.fcmTokens.length > 0) {
-
-        await sendNotificationNow({
-          userId: application.workerId,
-          type: "تم قبول طلبك للوظيفة",
-          title: "تم قبول طلبك للوظيفة",
-          message: `تم قبول طلبك للوظيفة "${job.title}". يرجى تسجيل الدخول إلى حسابك لمزيد من التفاصيل.`,
-          relatedJobId: job._id,
-        });
-      }else{
-
-      // email notification
-        await sendEmail({
-          Email: application.workerId.email,
-          subject: "تم قبول طلبك للوظيفة",
-          message: `تم قبول طلبك للوظيفة "${job.title}". يرجى تسجيل الدخول إلى حسابك لمزيد من التفاصيل.`,
-        });
-      }
-
-      await notificationService.scheduleNotification({
-      userId: application.workerId,
-      type: "job_reminder_24h",
-      title: "تذكير بالشغل",
-      message: `بكرة عندك شغل ${job.title}`,
-      relatedJobId: job._id,
-      scheduledAt: new Date(
-        new Date(job.startDateTime).getTime() - 24 * 60 * 60 * 1000
-      ),
-    });
-
-    await notificationService.scheduleNotification({
-      userId: application.workerId,
-      type: "job_reminder_2h",
-      title: "تذكير بالشغل",
-      message: `فاض ساعتين على شغل ${job.title}`,
-      relatedJobId: job._id,
-      scheduledAt: new Date(
-        new Date(job.startDateTime).getTime() - 2 * 60 * 60 * 1000
-      ),
-    });
 
     res.status(200).json({
       status: "success",
       message: "Worker accepted",
       data: application,
     });
+
+    setImmediate(() => {
+      handleWorkerAcceptedNotifications(application, job);
+    });
+
   } catch (err) {
     await session.abortTransaction();
     throw err;
@@ -222,27 +193,16 @@ exports.rejectWorker = asyncHandler(async (req, res) => {
   application.status = "rejected";
   await application.save();
 
-  // notify worker
-  if (application.workerId.fcmTokens && application.workerId.fcmTokens.length > 0) {
-      await sendNotificationNow({
-        userId: application.workerId._id,
-        type: "تم رفض طلبك للوظيفة",
-        title: "تم رفض طلبك للوظيفة",
-        message: `تم رفض طلبك للوظيفة "${job.title}". يرجى تسجيل الدخول إلى حسابك لمزيد من التفاصيل.`,
-        relatedJobId: job._id,
-      });
-  }else{
-  // email notification
-    await sendEmail({
-      Email: application.workerId.email,
-      subject: "تم رفض طلبك للوظيفة",
-      message: `تم رفض طلبك للوظيفة "${job.title}". يرجى تسجيل الدخول إلى حسابك لمزيد من التفاصيل.`,
-    });
-  }
   res.status(200).json({
     status: "success",
     message: "Worker rejected",
   });
+
+  setImmediate(() => {
+    handleWorkerRejectedNotifications(application, job);
+  });
+
+
 });
 
 /* =====================================================
