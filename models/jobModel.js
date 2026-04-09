@@ -89,6 +89,11 @@ const jobSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    jobPostedAs: {
+      type: String,
+      enum: ["company", "mediator"],
+      required: true
+    },
 
     companyDetails: {
       companyName: { type: String },

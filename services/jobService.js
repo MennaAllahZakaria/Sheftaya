@@ -1,4 +1,5 @@
 const asyncHandler = require("express-async-handler");
+const mongoose = require("mongoose");
 
 const Job = require("../models/jobModel");
 const Application = require("../models/applicationModel");
@@ -20,6 +21,8 @@ exports.createJob = asyncHandler(async (req, res) => {
   const employerId = req.user._id;
   const files = { ...(req.uploadedFiles || {}) };
 
+  /* ================= AUTH ================= */
+
   if (req.user.role !== "employer") {
     throw new ApiError("Only employers can create jobs", 403);
   }
@@ -27,9 +30,10 @@ exports.createJob = asyncHandler(async (req, res) => {
   const identityVerification = await IdentityVerification.findOne({
     userId: employerId,
   }).select("status");
-    if (!identityVerification || identityVerification.status !== "approved") {
-      throw new ApiError("Identity verification required to create jobs", 403);
-    }
+
+  if (!identityVerification || identityVerification.status !== "approved") {
+    throw new ApiError("Identity verification required to create jobs", 403);
+  }
 
   if (
     req.user.discipline?.blockedUntil &&
@@ -37,6 +41,8 @@ exports.createJob = asyncHandler(async (req, res) => {
   ) {
     throw new ApiError("Your account is temporarily blocked", 403);
   }
+
+  /* ================= INPUT ================= */
 
   const {
     title,
@@ -51,8 +57,11 @@ exports.createJob = asyncHandler(async (req, res) => {
     details,
     paymentMethod,
     requiredSkills,
-    companyDetails
+    companyDetails,
+    jobPostedAs = "company", //  default
   } = req.body;
+
+  /* ================= VALIDATION ================= */
 
   if (!title || !place || !location || !startDateTime || !endDateTime) {
     throw new ApiError("Missing required job fields", 400);
@@ -60,6 +69,10 @@ exports.createJob = asyncHandler(async (req, res) => {
 
   if (new Date(startDateTime) <= new Date()) {
     throw new ApiError("Start time must be in the future", 400);
+  }
+
+  if (new Date(endDateTime) <= new Date(startDateTime)) {
+    throw new ApiError("End time must be after start time", 400);
   }
 
   if (
@@ -78,16 +91,50 @@ exports.createJob = asyncHandler(async (req, res) => {
     throw new ApiError("Total job cost must be greater than zero", 400);
   }
 
-  if (companyDetails) {
-    if (typeof companyDetails !== "object") {
-      throw new ApiError("Invalid company details format", 400);
-    }
-    if (companyDetails.name && typeof companyDetails.name !== "string") {
-      throw new ApiError("Company name must be a string", 400);
+  /* ================= COMPANY LOGIC ================= */
+
+  const employerProfile = await EmployerProfile.findOne({
+    userId: employerId,
+  }).lean();
+
+  let finalCompanyDetails;
+
+  if (jobPostedAs === "company") {
+    if (!employerProfile) {
+      throw new ApiError("Employer profile not found", 404);
     }
 
-    companyDetails.companyImages = files?.companyImages || [];
+    finalCompanyDetails = {
+      companyName: employerProfile.companyName,
+      companyType: employerProfile.companyType,
+      companyAddress: employerProfile.companyAddress,
+      companyCity: employerProfile.city,
+      companyTaxNumber: employerProfile.taxNumber,
+      companyCommercialRegisterNumber:
+        employerProfile.commercialRegisterNumber,
+      companyContactPersonName: employerProfile.contactPersonName,
+      companyImages: employerProfile.companyImages || [],
+    };
+  } else if (jobPostedAs === "mediator") {
+    if (!companyDetails || !companyDetails.companyName) {
+      throw new ApiError("Mediator company details required", 400);
+    }
+
+    finalCompanyDetails = {
+      companyName: companyDetails.companyName,
+      companyType: companyDetails.companyType,
+      companyAddress: companyDetails.companyAddress,
+      companyCity: companyDetails.companyCity,
+      companyContactPersonName:
+        companyDetails.companyContactPersonName,
+
+      companyImages: files?.companyImages || [],
+    };
+  } else {
+    throw new ApiError("Invalid jobPostedAs value", 400);
   }
+
+  /* ================= CREATE JOB ================= */
 
   const job = await Job.create({
     employerId,
@@ -103,61 +150,36 @@ exports.createJob = asyncHandler(async (req, res) => {
     details,
     requiredSkills,
     JobImages: files?.JobImages,
-    companyDetails: companyDetails || {},
+
+    jobPostedAs,
+    companyDetails: finalCompanyDetails,
+
     status: "active",
+
     payment: {
       method: paymentMethod,
       status: "pending",
-      totalAmount
+      totalAmount,
     },
+
     cancellationPolicy: {
       freeCancelUntil: new Date(
         new Date(startDateTime).getTime() - 24 * 60 * 60 * 1000
       ),
       penaltyAfter: new Date(
         new Date(startDateTime).getTime() - 2 * 60 * 60 * 1000
-      )
-    }
+      ),
+    },
   });
+
+  /* ================= RESPONSE ================= */
 
   res.status(201).json({
     status: "success",
-    data: job
+    data: job,
   });
 });
 
-/* =====================================================
-   ACTIVATE JOB AFTER PAYMENT
-===================================================== */
-
-exports.activateJob = asyncHandler(async (req, res) => {
-  const job = await Job.findById(req.params.id);
-
-  if (!job) throw new ApiError("Job not found", 404);
-
-  if (!job.employerId.equals(req.user._id)) {
-    throw new ApiError("Unauthorized", 403);
-  }
-
-  if (job.status !== "draft") {
-    throw new ApiError("Job already activated or invalid state", 400);
-  }
-
-  if (job.payment.status !== "paid_intent_created") {
-    throw new ApiError("Payment not completed", 400);
-  }
-
-  job.payment.status = "held";
-  job.status = "active";
-
-  await job.save();
-
-  res.status(200).json({
-    status: "success",
-    message: "Job activated and active for applications",
-    data: job
-  });
-});
 
 /* =====================================================
    LIST active JOBS (Workers)
@@ -214,7 +236,7 @@ exports.getActiveJobs = asyncHandler(async (req, res) => {
     if (dateTo) filter.startDateTime.$lte = new Date(dateTo);
   }
 
-  // 🔥 GEO FILTER (الأهم)
+  //  GEO FILTER 
   if (lat && lng) {
     filter.location = {
       $near: {
@@ -244,12 +266,12 @@ exports.getActiveJobs = asyncHandler(async (req, res) => {
 
   const jobsQuery = Job.find(filter)
     .select(
-      "title place location startDateTime dailyWorkHours pricePerHour experienceLevel status requiredSkills JobImages"
+      "title place location startDateTime dailyWorkHours pricePerHour requiredWorkers acceptedWorkersCount experienceLevel status requiredSkills JobImages"
     )
     .sort(sort)
     .skip(skip)
     .limit(limit)
-    .lean(); // 🔥 مهم
+    .lean();
 
   const [jobs, total] = await Promise.all([
     jobsQuery,
@@ -276,31 +298,71 @@ exports.getActiveJobs = asyncHandler(async (req, res) => {
 
 exports.getJobDetails = asyncHandler(async (req, res) => {
   const jobId = req.params.id;
+  const userId = req.user._id;
+  const userRole = req.user.role;
+
+  /* ================= GET JOB ================= */
 
   const job = await Job.findById(jobId)
-    .populate("employerId", "firstName lastName");
+    .select(
+      "title place location startDateTime endDateTime dailyWorkHours pricePerHour requiredWorkers acceptedWorkersCount experienceLevel status requiredSkills JobImages employerId"
+    )
+    .populate("employerId", "firstName lastName")
+    .lean();
 
-  if (!job) throw new ApiError("Job not found", 404);
-
-  let applications = null;
-  let myApplication = null;
-
-  if (req.user.role === "employer" &&
-      job.employerId._id.equals(req.user._id)) {
-    applications = await Application.find({ jobId: job._id })
-      .populate("workerId", "firstName lastName city profileImage");
+  if (!job) {
+    throw new ApiError("Job not found", 404);
   }
 
-  if (req.user.role === "worker") {
+  /* ================= ACCESS CONTROL ================= */
+
+  const isOwner =
+    job.employerId &&
+    job.employerId._id.toString() === userId.toString();
+
+  if (!isOwner && job.status !== "active") {
+    throw new ApiError("You are not allowed to view this job", 403);
+  }
+
+  /* ================= ROLE-BASED RESPONSE ================= */
+
+  let applications = undefined;
+  let myApplication = undefined;
+
+  /* ===== EMPLOYER (OWNER ONLY) ===== */
+  if (userRole === "employer" && isOwner) {
+    applications = await Application.find({
+      jobId: job._id,
+      status: { $in: ["pending", "accepted"] }, 
+    })
+      .select("status createdAt workerId")
+      .populate("workerId", "firstName lastName city profileImage")
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  /* ===== WORKER ===== */
+  if (userRole === "worker") {
     myApplication = await Application.findOne({
       jobId: job._id,
-      workerId: req.user._id
-    });
+      workerId: userId,
+    })
+      .select("status createdAt")
+      .lean();
   }
+
+  /* ================= RESPONSE SHAPING ================= */
+
+  const response = {
+    job,
+  };
+
+  if (applications) response.applications = applications;
+  if (myApplication) response.myApplication = myApplication;
 
   res.status(200).json({
     status: "success",
-    data: { job, applications, myApplication }
+    data: response,
   });
 });
 
@@ -309,19 +371,35 @@ exports.getJobDetails = asyncHandler(async (req, res) => {
 ===================================================== */
 
 exports.getMyJobs = asyncHandler(async (req, res) => {
-  let jobs = [];
+  const userId = req.user._id;
+  const role = req.user.role;
 
-  if (req.user.role === "employer") {
-    jobs = await Job.find({ employerId: req.user._id })
-      .sort({ startDateTime: -1 });
+  let data = [];
+
+  if (role === "employer") {
+    const jobs = await Job.find({ employerId: userId })
+      .select("title startDateTime pricePerHour status")
+      .sort({ startDateTime: -1 })
+      .lean();
+
+    data = jobs.map(job => ({
+      job,
+      applicationStatus: null,
+      arrivalStatus: null
+    }));
   }
 
-  if (req.user.role === "worker") {
+  if (role === "worker") {
     const applications = await Application.find({
-      workerId: req.user._id
-    }).populate("jobId");
+      workerId: userId,
+      status: { $ne: "rejected" }
+    })
+      .select("status arrivalStatus jobId")
+      .populate("jobId", "title startDateTime pricePerHour status")
+      .sort({ createdAt: -1 })
+      .lean();
 
-    jobs = applications.map(app => ({
+    data = applications.map(app => ({
       job: app.jobId,
       applicationStatus: app.status,
       arrivalStatus: app.arrivalStatus
@@ -330,8 +408,8 @@ exports.getMyJobs = asyncHandler(async (req, res) => {
 
   res.status(200).json({
     status: "success",
-    results: jobs.length,
-    data: jobs
+    results: data.length,
+    data
   });
 });
 
@@ -442,68 +520,118 @@ exports.updateJob = asyncHandler(async (req, res) => {
 ===================================================== */
 
 exports.cancelJob = asyncHandler(async (req, res) => {
-  const job = await Job.findById(req.params.id);
+  const jobId = req.params.id;
+  const userId = req.user._id;
+  const reason = req.body.reason || "Cancelled by employer";
 
-  if (!job) throw new ApiError("Job not found", 404);
 
-  if (!job.employerId.equals(req.user._id)) {
-    throw new ApiError("Unauthorized", 403);
-  }
+  /* ================= TRANSACTION ================= */
 
-  if (["completed", "cancelled"].includes(job.status)) {
-    throw new ApiError("Job already finished or cancelled", 400);
-  }
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  job.status = "cancelled";
-  job.cancelReason = req.body.reason || "Cancelled by employer";
+  try {
+    /* ================= ATOMIC UPDATE ================= */
 
-  if (job.payment.status === "held") {
-    job.payment.status = "refunded";
-  }
+    const job = await Job.findOneAndUpdate(
+      {
+        _id: jobId,
+        employerId: userId,
+        status: { $nin: ["completed", "cancelled"] }
+      },
+      {
+        $set: {
+          status: "cancelled",
+          cancelReason: reason
+        }
+      },
+      { new: true, session }
+    );
 
-  await penaltyService.reportIncident({
-    userId: job.employerId,
-    jobId: job._id,
-    type: "employer_cancelled",
-    severity:
-      new Date(job.startDateTime) - new Date() < 24 * 60 * 60 * 1000
-        ? "high"
-        : "medium",
-  });
-
-  await job.save();
-
-  // Notify accepted workers
-  const applications = await Application.find({
-    jobId: job._id,
-    status: "accepted"
-  }).populate("workerId", "fcmTokens email");
-
-  for (const app of applications) {
-    // push notification
-    if (app.workerId.fcmTokens && app.workerId.fcmTokens.length > 0) {
-      await sendNotificationNow({
-        userId: app.workerId,
-        type: "تم إلغاء الوظيفة",
-        title: "تم إلغاء الوظيفة",
-        message: `تم إلغاء الوظيفة "${job.title}" التي تم قبولك لها. نأسف للإزعاج.`,
-        relatedJobId: job._id,
-      });
+    if (!job) {
+      throw new ApiError("Job not found or unauthorized", 404);
     }
-    else {
-      await sendEmail({
-        Email: app.workerId.email,
-        subject: "تم إلغاء الوظيفة",
-        message: `تم إلغاء الوظيفة "${job.title}" التي تم قبولك لها. نأسف للإزعاج.`,
-      });
-    }
-  }
 
-  res.status(200).json({
-    status: "success",
-    message: "Job cancelled",
-    data: job
-  });
+    /* ================= PAYMENT HANDLING ================= */
+
+    if (job.payment?.status === "held") {
+      job.payment.status = "refunded";
+      await job.save({ session });
+    }
+
+    /* ================= PENALTY ================= */
+
+    const isLateCancel =
+      new Date(job.startDateTime) - new Date() < 24 * 60 * 60 * 1000;
+
+    await penaltyService.reportIncident({
+      userId: job.employerId,
+      jobId: job._id,
+      type: "employer_cancelled",
+      severity: isLateCancel ? "high" : "medium",
+    });
+
+    /* ================= GET WORKERS ================= */
+
+    const applications = await Application.find({
+      jobId: job._id,
+      status: "accepted"
+    })
+      .select("workerId")
+      .populate("workerId", "fcmTokens email")
+      .lean()
+      .session(session);
+
+    await session.commitTransaction();
+    session.endSession();
+
+    /* ================= NOTIFICATIONS (OUTSIDE TX) ================= */
+
+    await Promise.all(
+      applications.map(async (app) => {
+        try {
+          if (
+            app.workerId?.fcmTokens &&
+            app.workerId.fcmTokens.length > 0
+          ) {
+            return sendNotificationNow({
+              userId: app.workerId._id,
+              type: "job_cancelled",
+              title: "تم إلغاء الوظيفة",
+              message: `تم إلغاء الوظيفة "${job.title}" التي تم قبولك لها.`,
+              relatedJobId: job._id,
+            });
+          } else if (app.workerId?.email) {
+            return sendEmail({
+              Email: app.workerId.email,
+              subject: "تم إلغاء الوظيفة",
+              message: `تم إلغاء الوظيفة "${job.title}" التي تم قبولك لها.`,
+            });
+          }
+        } catch (err) {
+          console.error("Notification failed:", err.message);
+        }
+      })
+    );
+
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      status: "success",
+      message: "Job cancelled successfully",
+      data: {
+        _id: job._id,
+        status: job.status,
+        cancelReason: job.cancelReason,
+        paymentStatus: job.payment?.status
+      }
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
+  }
 });
 
 /* =====================================================
@@ -511,54 +639,120 @@ exports.cancelJob = asyncHandler(async (req, res) => {
 ===================================================== */
 
 exports.confirmCompletion = asyncHandler(async (req, res) => {
-  const job = await Job.findById(req.params.id);
+  const jobId = req.params.id;
+  const userId = req.user._id;
 
-  if (!job) throw new ApiError("Job not found", 404);
 
-  if (new Date() < new Date(job.endDateTime)) {
-    throw new ApiError("Job has not ended yet", 400);
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    /* ================= GET JOB ================= */
+
+    const job = await Job.findById(jobId).session(session);
+
+    if (!job) {
+      throw new ApiError("Job not found", 404);
+    }
+
+    /* ================= STATUS CHECK ================= */
+
+    if (["cancelled", "completed"].includes(job.status)) {
+      throw new ApiError("Job is not eligible for confirmation", 400);
+    }
+
+    if (new Date() < new Date(job.endDateTime)) {
+      throw new ApiError("Job has not ended yet", 400);
+    }
+
+    const isEmployer = job.employerId.equals(userId);
+
+    /* ================= WORKER CHECK ================= */
+
+    let application = null;
+
+    if (!isEmployer) {
+      application = await Application.findOne({
+        jobId: job._id,
+        workerId: userId,
+        status: "accepted"
+      }).session(session);
+
+      if (!application) {
+        throw new ApiError("Unauthorized", 403);
+      }
+    }
+
+    /* ================= EMPLOYER CONFIRM ================= */
+
+    if (isEmployer) {
+      if (!job.confirmation.employerConfirmed) {
+        job.confirmation.employerConfirmed = true;
+      }
+    }
+
+    /* ================= WORKER CONFIRM ================= */
+
+    if (!isEmployer) {
+      if (!application.workerConfirmedCompletion) {
+        application.workerConfirmedCompletion = true;
+        await application.save({ session });
+
+        await Job.updateOne(
+          { _id: job._id },
+          { $inc: { "confirmation.workersConfirmedCount": 1 } },
+          { session }
+        );
+      }
+    }
+
+    /* ================= REFRESH JOB ================= */
+
+    const updatedJob = await Job.findById(job._id).session(session);
+
+    /* ================= FINAL COMPLETION ================= */
+
+    if (
+      updatedJob.confirmation.employerConfirmed &&
+      updatedJob.confirmation.workersConfirmedCount >=
+        updatedJob.requiredWorkers
+    ) {
+      updatedJob.status = "completed";
+
+      if (updatedJob.payment?.status !== "paid") {
+        updatedJob.payment.status = "paid";
+      }
+    }
+
+    await updatedJob.save({ session });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      status: "success",
+      message: "Completion confirmed",
+      data: {
+        _id: updatedJob._id,
+        status: updatedJob.status,
+        confirmation: updatedJob.confirmation,
+        paymentStatus: updatedJob.payment?.status
+      }
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
   }
-
-  const isEmployer = job.employerId.equals(req.user._id);
-
-  const application = await Application.findOne({
-    jobId: job._id,
-    workerId: req.user._id
-  });
-
-  if (!isEmployer && !application) {
-    throw new ApiError("Unauthorized", 403);
-  }
-
-  if (isEmployer) {
-    job.confirmation.employerConfirmed = true;
-  } else {
-    application.workerConfirmedCompletion = true;
-    await application.save();
-    job.confirmation.workersConfirmedCount += 1;
-  }
-
-  if (
-    job.confirmation.employerConfirmed &&
-    job.confirmation.workersConfirmedCount >= job.requiredWorkers
-  ) {
-    job.status = "completed";
-    job.payment.status = "paid";
-  }
-
-  await job.save();
-
-  res.status(200).json({
-    status: "success",
-    message: "Completion confirmed",
-    data: job
-  });
 });
 
 
 const axios = require("axios");
 
-exports.getRecommendations = async (worker, jobs) => {
+ const getRecommendations = async (worker, jobs) => {
   try {
     const response = await axios.post(
       "https://recommendation-system-shiftaya-production.up.railway.app/recommend",
@@ -596,36 +790,102 @@ exports.getRecommendedJobs = asyncHandler(async (req, res) => {
   /* ================= JOBS ================= */
 
   const jobs = await Job.find({ status: "active" })
-    .select("title pricePerHour experienceLevel location details")
+    .select(`
+      title
+      pricePerHour
+      experienceLevel
+      location
+      details
+      requiredSkills
+      dailyWorkHours
+      startDateTime
+      requiredWorkers
+      companyDetails
+    `)
     .lean();
 
   if (!jobs.length) {
     return res.status(200).json({
       status: "success",
-      data: {
-        recommendations: [],
-      },
+      results: 0,
+      data: [],
     });
   }
 
-  /* ================= AI CALL ================= */
+  /* ================= SCORING FUNCTION ================= */
 
-  let recommendations;
+  const scoreJob = (job, worker) => {
+    let score = 0;
+
+    // 1. skills match
+    if (worker.skills?.length && job.requiredSkills?.length) {
+      const matches = job.requiredSkills.filter(skill =>
+        worker.skills.includes(skill)
+      );
+      score += matches.length * 5;
+    }
+
+    // 2. experience match
+    if (worker.experienceLevel === job.experienceLevel) {
+      score += 10;
+    }
+
+    // 3. price preference (expected rate)
+    if (worker.expectedSalary && job.pricePerHour?.amount) {
+      const diff = Math.abs(
+        worker.expectedSalary - job.pricePerHour.amount
+      );
+      score += Math.max(0, 10 - diff);
+    }
+
+    // 4. availability (basic)
+    if (worker.availableDays?.length) {
+      const jobDay = new Date(job.startDateTime).getDay();
+      if (worker.availableDays.includes(jobDay)) {
+        score += 5;
+      }
+    }
+
+    return score;
+  };
+
+  /* ================= RANKING ================= */
+
+  let rankedJobs = jobs
+    .map(job => ({
+      ...job,
+      score: scoreJob(job, worker),
+    }))
+    .sort((a, b) => b.score - a.score);
+
+  /* ================= AI ENHANCEMENT ================= */
 
   try {
-    const aiResponse = await getRecommendations(worker, jobs);
-    recommendations = aiResponse.recommendations;
-  } catch (err) {
-    console.warn("AI fallback activated");
+    const aiResponse = await getRecommendations(worker, rankedJobs.slice(0, 20));
 
-    recommendations = jobs.slice(0, 10);
+    if (aiResponse?.recommendations?.length) {
+      rankedJobs = aiResponse.recommendations;
+    }
+  } catch (err) {
+    console.warn("AI skipped, using internal ranking");
   }
+
+  /* ================= FORMAT ================= */
+
+  const formatted = rankedJobs.slice(0, 10).map(job => ({
+    ...job,
+    companyName: job.companyDetails?.companyName,
+    companyImage: job.companyDetails?.companyImages?.[0] || null,
+    workHours: job.dailyWorkHours,
+    startTime: job.startDateTime,
+    requiredWorkers: job.requiredWorkers,
+  }));
 
   /* ================= RESPONSE ================= */
 
   res.status(200).json({
     status: "success",
-    results: recommendations.length,
-    data: recommendations,
+    results: formatted.length,
+    data: formatted,
   });
 });

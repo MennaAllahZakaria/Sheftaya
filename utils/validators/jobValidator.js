@@ -90,7 +90,9 @@ exports.updateJobValidator=[
     check("requiredWorkers") 
         .optional()
         .isInt({ min: 1 })
-        .withMessage("At least one worker is required"),
+        .withMessage("At least one worker is required")
+        .isInt({ max: 1000 })
+        .withMessage("Required workers must be less than 1000"),
     check("details")
         .optional()
         .trim()
