@@ -25,15 +25,18 @@ exports.applyForJob = asyncHandler(async (req, res) => {
   const workerId = req.user._id;
   const jobId = req.params.id;
 
+  /* ================= VALIDATION ================= */
+
   if (req.user.role !== "worker") {
     throw new ApiError("Only workers can apply", 403);
   }
+
   const identityVerification = await IdentityVerification.findOne({
     userId: workerId,
   }).select("status");
 
   if (!identityVerification || identityVerification.status !== "approved") {
-    throw new ApiError("Identity verification required to apply for jobs", 403);
+    throw new ApiError("Identity verification required", 403);
   }
 
   if (
@@ -43,70 +46,134 @@ exports.applyForJob = asyncHandler(async (req, res) => {
     throw new ApiError("Your account is temporarily blocked", 403);
   }
 
-  const job = await Job.findById(jobId).populate("employerId", "firstName lastName email fcmTokens");
-  if (!job || job.status !== "open") {
-    throw new ApiError("Job not available", 400);
-  }
+  /* ================= TRANSACTION ================= */
 
-  if (job.acceptedWorkersCount >= job.requiredWorkers) {
-    throw new ApiError("Job already filled", 400);
-  }
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  // check for time conflicts with already accepted jobs
-  const conflicts = await Application.find({
-    workerId,
-    status: "accepted",
-  }).populate("jobId");
+  try {
+    /* ================= GET JOB ================= */
 
-  for (const app of conflicts) {
-    const cJob = app.jobId;
-    if (
-      new Date(job.startDateTime) < new Date(cJob.endDateTime) &&
-      new Date(job.endDateTime) > new Date(cJob.startDateTime)
-    ) {
-      throw new ApiError("You already accepted a job at this time", 400);
+    const job = await Job.findOne({
+      _id: jobId,
+      status: "open",
+    })
+      .select(
+        "startDateTime endDateTime requiredWorkers acceptedWorkersCount applicantsCount employerId title"
+      )
+      .populate("employerId", "firstName lastName email fcmTokens")
+      .session(session);
+
+    if (!job) {
+      throw new ApiError("Job not available", 400);
     }
-  }
 
-  const existing = await Application.findOne({ jobId, workerId });
-  if (existing) {
-    throw new ApiError("You already applied for this job", 400);
-  }
+    if (job.acceptedWorkersCount >= job.requiredWorkers) {
+      throw new ApiError("Job already filled", 400);
+    }
 
-  const application = await Application.create({
-    jobId,
-    workerId,
-  });
+    /* ================= DUPLICATE CHECK (SAFE) ================= */
 
-  // increment applicants count
-  job.applicantsCount += 1;
-  await job.save();
+    const existing = await Application.findOne({
+      jobId,
+      workerId,
+    }).session(session);
 
+    if (existing) {
+      throw new ApiError("You already applied for this job", 400);
+    }
 
-  // notify employer
-  if (job.employerId.fcmTokens && job.employerId.fcmTokens.length > 0) {
+    /* ================= TIME CONFLICT CHECK ================= */
 
-      await sendNotificationNow({
-        userId: job.employerId._id,
-        type: "عامل جديد قدم لوظيفتك",
-        title: "عامل جديد قدم لوظيفتك",
-        message: `تم التقديم لوظيفتك من قبل ${req.user.firstName} ${req.user.lastName}. يرجى تسجيل الدخول إلى حسابك لمراجعة الطلب.`,
-        relatedJobId: job._id,
-      });
-  }else{
+    const conflicts = await Application.find({
+      workerId,
+      status: "accepted",
+    })
+      .select("jobId")
+      .populate({
+        path: "jobId",
+        select: "startDateTime endDateTime",
+      })
+      .lean();
 
-  // email notification
-    await sendEmail({
-      Email: job.employerId.email,
-      subject: "عامل جديد قدم لوظيفتك",
-      message: `تم التقديم لوظيفتك من قبل ${req.user.firstName} ${req.user.lastName}. يرجى تسجيل الدخول إلى حسابك لمراجعة الطلب.`,
+    const hasConflict = conflicts.some((app) => {
+      const cJob = app.jobId;
+      return (
+        new Date(job.startDateTime) < new Date(cJob.endDateTime) &&
+        new Date(job.endDateTime) > new Date(cJob.startDateTime)
+      );
     });
-  }
 
-  res.status(201).json({
-    status: "success",
-    data: application,
-  });
+    if (hasConflict) {
+      throw new ApiError(
+        "You already accepted a job at this time",
+        400
+      );
+    }
+
+    /* ================= CREATE APPLICATION ================= */
+
+    const application = await Application.create(
+      [
+        {
+          jobId,
+          workerId,
+          status: "pending",
+        },
+      ],
+      { session }
+    );
+
+    /* ================= SAFE INCREMENT ================= */
+
+    await Job.updateOne(
+      { _id: jobId },
+      { $inc: { applicantsCount: 1 } },
+      { session }
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+
+    /* ================= NOTIFICATIONS (NON-BLOCKING) ================= */
+
+    setImmediate(async () => {
+      try {
+        if (
+          job.employerId?.fcmTokens &&
+          job.employerId.fcmTokens.length > 0
+        ) {
+          await sendNotificationNow({
+            userId: job.employerId._id,
+            type: "new_application",
+            title: "عامل جديد قدم لوظيفتك",
+            message: `تم التقديم من ${req.user.firstName} ${req.user.lastName}`,
+            relatedJobId: job._id,
+          });
+        } else if (job.employerId?.email) {
+          await sendEmail({
+            Email: job.employerId.email,
+            subject: "عامل جديد قدم لوظيفتك",
+            message: `تم التقديم من ${req.user.firstName} ${req.user.lastName}`,
+          });
+        }
+      } catch (err) {
+        console.error("Notification failed:", err.message);
+      }
+    });
+
+    /* ================= RESPONSE ================= */
+
+    res.status(201).json({
+      status: "success",
+      data: application[0],
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
+  }
 });
 
 /* =====================================================
@@ -115,59 +182,180 @@ exports.applyForJob = asyncHandler(async (req, res) => {
 // POST /jobs/:jobId/applications/:applicationId/accept
 exports.acceptWorker = asyncHandler(async (req, res) => {
   const { jobId, applicationId } = req.params;
+  const employerId = req.user._id;
 
+  
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
-    const job = await Job.findById(jobId).session(session);
-    if (!job) throw new ApiError("Job not found", 404);
+    /* ================= GET JOB (LOCK CONDITION) ================= */
 
-    if (!job.employerId.equals(req.user._id)) {
-      throw new ApiError("Unauthorized", 403);
+    const job = await Job.findOne({
+      _id: jobId,
+      employerId,
+      status: { $in: ["open", "filled"] },
+    })
+      .select(
+        "requiredWorkers acceptedWorkersCount startDateTime endDateTime status title"
+      )
+      .session(session);
+
+    if (!job) {
+      throw new ApiError("Job not found or unauthorized", 404);
     }
 
     if (job.acceptedWorkersCount >= job.requiredWorkers) {
       throw new ApiError("Job already filled", 400);
     }
 
-    const application = await Application.findById(applicationId).session(
-      session
-    ).populate("workerId", "fcmTokens email");
+    /* ================= GET APPLICATION (STRICT) ================= */
 
-    if (!application || application.status !== "pending") {
+    const application = await Application.findOne({
+      _id: applicationId,
+      jobId,
+      status: "pending",
+    })
+      .populate("workerId", "fcmTokens email")
+      .session(session);
+
+    if (!application) {
       throw new ApiError("Invalid application", 400);
     }
 
-    application.status = "accepted";
-    application.acceptedByEmployerAt = new Date();
-    application.employerAccepted = true;
-    await application.save({ session });
+    const workerId = application.workerId._id;
 
-    job.acceptedWorkersCount += 1;
-    if (job.acceptedWorkersCount === job.requiredWorkers) {
-      job.status = "filled";
+    /* ================= WORKER CONFLICT CHECK ================= */
+
+    const conflicts = await Application.find({
+      workerId,
+      status: "accepted",
+    })
+      .populate({
+        path: "jobId",
+        select: "startDateTime endDateTime",
+      })
+      .lean();
+
+    const hasConflict = conflicts.some((app) => {
+      const cJob = app.jobId;
+      return (
+        new Date(job.startDateTime) < new Date(cJob.endDateTime) &&
+        new Date(job.endDateTime) > new Date(cJob.startDateTime)
+      );
+    });
+
+    if (hasConflict) {
+      throw new ApiError("Worker already busy in this time", 400);
     }
 
-    await job.save({ session });
-    await session.commitTransaction();
+    /* ================= UPDATE APPLICATION (ATOMIC) ================= */
 
+    const updatedApp = await Application.findOneAndUpdate(
+      {
+        _id: applicationId,
+        jobId,
+        status: "pending",
+      },
+      {
+        $set: {
+          status: "accepted",
+          acceptedByEmployerAt: new Date(),
+          employerAccepted: true,
+        },
+      },
+      { new: true, session }
+    );
+
+    if (!updatedApp) {
+      throw new ApiError("Application already processed", 400);
+    }
+
+    /* ================= ATOMIC JOB UPDATE ================= */
+
+    const updatedJob = await Job.findOneAndUpdate(
+      {
+        _id: jobId,
+        acceptedWorkersCount: { $lt: job.requiredWorkers },
+      },
+      {
+        $inc: { acceptedWorkersCount: 1 },
+      },
+      { new: true, session }
+    );
+
+    if (!updatedJob) {
+      throw new ApiError("Job just got filled", 400);
+    }
+
+    /* ================= HANDLE FULL JOB ================= */
+
+    if (updatedJob.acceptedWorkersCount === updatedJob.requiredWorkers) {
+      await Job.updateOne(
+        { _id: jobId },
+        { $set: { status: "filled" } },
+        { session }
+      );
+
+      // optional: auto-reject باقي applications
+      await Application.updateMany(
+        {
+          jobId,
+          status: "pending",
+        },
+        {
+          $set: { status: "rejected" },
+        },
+        { session }
+      );
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    /* ================= NOTIFICATIONS (ASYNC) ================= */
+
+    setImmediate(async () => {
+      try {
+        if (
+          application.workerId?.fcmTokens &&
+          application.workerId.fcmTokens.length > 0
+        ) {
+          await sendNotificationNow({
+            userId: workerId,
+            type: "job_accepted",
+            title: "تم قبولك في الوظيفة",
+            message: `تم قبولك في وظيفة "${job.title}"`,
+            relatedJobId: job._id,
+          });
+        } else if (application.workerId?.email) {
+          await sendEmail({
+            Email: application.workerId.email,
+            subject: "تم قبولك في الوظيفة",
+            message: `تم قبولك في وظيفة "${job.title}"`,
+          });
+        }
+      } catch (err) {
+        console.error("Notification error:", err.message);
+      }
+    });
+
+    /* ================= RESPONSE ================= */
 
     res.status(200).json({
       status: "success",
-      message: "Worker accepted",
-      data: application,
-    });
-
-    setImmediate(() => {
-      handleWorkerAcceptedNotifications(application, job);
+      message: "Worker accepted successfully",
+      data: {
+        applicationId: updatedApp._id,
+        status: updatedApp.status,
+        acceptedAt: updatedApp.acceptedByEmployerAt,
+      },
     });
 
   } catch (err) {
     await session.abortTransaction();
-    throw err;
-  } finally {
     session.endSession();
+    throw err;
   }
 });
 
@@ -177,32 +365,77 @@ exports.acceptWorker = asyncHandler(async (req, res) => {
 // POST /jobs/:jobId/applications/:applicationId/reject
 exports.rejectWorker = asyncHandler(async (req, res) => {
   const { jobId, applicationId } = req.params;
+  const rejectReason = req.body.rejectReason || "No reason provided";
+  const employerId = req.user._id;
 
-  const job = await Job.findById(jobId);
-  if (!job) throw new ApiError("Job not found", 404);
+  /* ================= GET JOB ================= */
 
-  if (!job.employerId.equals(req.user._id)) {
-    throw new ApiError("Unauthorized", 403);
+  const job = await Job.findOne({
+    _id: jobId,
+    employerId,
+    status: { $in: ["open", "filled"] },
+  }).select("title");
+
+  if (!job) {
+    throw new ApiError("Job not found or unauthorized", 404);
   }
 
-  const application = await Application.findById(applicationId).populate("workerId", "fcmTokens email");
-  if (!application || application.status !== "pending") {
-    throw new ApiError("Invalid application", 400);
+  /* ================= ATOMIC APPLICATION UPDATE ================= */
+
+  const application = await Application.findOneAndUpdate(
+    {
+      _id: applicationId,
+      jobId,
+      status: "pending", // idempotency + safety
+    },
+    {
+      $set: {
+        status: "rejected",
+        rejectedAt: new Date(),
+        rejectReason,
+      },
+    },
+    {
+      new: true,
+    }
+  ).populate("workerId", "fcmTokens email");
+
+  if (!application) {
+    throw new ApiError("Application not found or already processed", 400);
   }
 
-  application.status = "rejected";
-  await application.save();
+  /* ================= RESPONSE ================= */
 
   res.status(200).json({
     status: "success",
-    message: "Worker rejected",
+    message: "Worker rejected successfully",
   });
 
-  setImmediate(() => {
-    handleWorkerRejectedNotifications(application, job);
+  /* ================= NOTIFICATIONS (ASYNC SAFE) ================= */
+
+  setImmediate(async () => {
+    try {
+      const worker = application.workerId;
+
+      if (worker?.fcmTokens && worker.fcmTokens.length > 0) {
+        await sendNotificationNow({
+          userId: worker._id,
+          type: "job_rejected",
+          title: "تم رفض طلبك",
+          message: `تم رفض طلبك لوظيفة "${job.title}"`,
+          relatedJobId: jobId,
+        });
+      } else if (worker?.email) {
+        await sendEmail({
+          Email: worker.email,
+          subject: "تم رفض طلبك",
+          message: `تم رفض طلبك لوظيفة "${job.title}"`,
+        });
+      }
+    } catch (err) {
+      console.error("Reject notification error:", err.message);
+    }
   });
-
-
 });
 
 /* =====================================================
@@ -210,99 +443,195 @@ exports.rejectWorker = asyncHandler(async (req, res) => {
 ===================================================== */
 // PUT /applications/:id/withdraw
 exports.withdrawApplication = asyncHandler(async (req, res) => {
-  const application = await Application.findById(req.params.id).populate(
-    "jobId","employerId"
-  );
+  const applicationId = req.params.id;
+  const workerId = req.user._id;
 
-  if (!application) throw new ApiError("Application not found", 404);
+  /* ================= TRANSACTION ================= */
 
-  if (!application.workerId.equals(req.user._id)) {
-    throw new ApiError("Unauthorized", 403);
-  }
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  if (["cancelled", "rejected"].includes(application.status)) {
-    throw new ApiError("Application already closed", 400);
-  }
+  try {
+    /* ================= GET APPLICATION (STRICT + ATOMIC) ================= */
 
-  // ممنوع الانسحاب بعد القبول
-  if (application.status === "accepted") {
-    throw new ApiError("You cannot withdraw after being accepted", 400);
-  }
+    const application = await Application.findOne({
+      _id: applicationId,
+      workerId,
+      status: { $nin: ["cancelled", "rejected", "accepted"] }, // idempotent
+    })
+      .populate({
+        path: "jobId",
+        select: "title startDateTime employerId status",
+      })
+      .session(session);
 
-  const job = application.jobId;
+    if (!application) {
+      throw new ApiError(
+        "Application not found or cannot be withdrawn",
+        400
+      );
+    }
 
-  application.status = "cancelled";
-  application.cancelledAt = new Date();
-  application.cancelReason = "Withdrawn by worker";
-  await application.save();
+    const job = application.jobId;
 
-  await penaltyService.reportIncident({
-    userId: req.user._id,
-    jobId: job._id,
-    type: "worker_cancelled",
-    severity:
-      new Date(job.startDateTime) - new Date() < 2 * 60 * 60 * 1000
-        ? "high"
-        : "medium",
-  });
+    /* ================= JOB STATUS CHECK ================= */
 
-  const employer = await User.findById(job.employerId);
+    if (["cancelled", "completed"].includes(job.status)) {
+      throw new ApiError("Job is no longer active", 400);
+    }
 
-  // notify employer
-  if (employer.fcmTokens && employer.fcmTokens.length > 0) {
-      await sendNotificationNow({
-        userId: employer._id,
-        type: "انسحاب عامل من طلب وظيفتك",
-        title:  "عامل انسحب من طلب وظيفتك",
-        message: `قام ${req.user.firstName} ${req.user.lastName} بالانسحاب من طلب وظيفتك "${job.title}". يرجى تسجيل الدخول إلى حسابك لمزيد من التفاصيل.`,
-        relatedJobId: job._id,
-      });
-  }else{
-  // email notification
-    await sendEmail({
-      Email: employer.email,
-      subject: "عامل انسحب من طلب وظيفتك",
-      message: `قام ${req.user.firstName} ${req.user.lastName} بالانسحاب من طلب وظيفتك "${job.title}". يرجى تسجيل الدخول إلى حسابك لمزيد من التفاصيل.`,
+    /* ================= UPDATE APPLICATION ================= */
+
+    application.status = "cancelled";
+    application.cancelledAt = new Date();
+    application.cancelReason = "Withdrawn by worker";
+
+    await application.save({ session });
+
+    /* ================= PENALTY ================= */
+
+    const isLate =
+      new Date(job.startDateTime) - new Date() <
+      2 * 60 * 60 * 1000;
+
+    await penaltyService.reportIncident({
+      userId: workerId,
+      jobId: job._id,
+      type: "worker_cancelled",
+      severity: isLate ? "high" : "medium",
     });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    /* ================= GET EMPLOYER ================= */
+
+    const employer = await User.findById(job.employerId).select(
+      "fcmTokens email"
+    );
+
+    /* ================= NOTIFICATIONS (ASYNC NON-BLOCKING) ================= */
+
+    setImmediate(async () => {
+      try {
+        if (
+          employer?.fcmTokens &&
+          employer.fcmTokens.length > 0
+        ) {
+          await sendNotificationNow({
+            userId: employer._id,
+            type: "worker_withdrew",
+            title: "عامل انسحب من طلبك",
+            message: `قام ${req.user.firstName} ${req.user.lastName} بالانسحاب من طلب وظيفة "${job.title}"`,
+            relatedJobId: job._id,
+          });
+        } else if (employer?.email) {
+          await sendEmail({
+            Email: employer.email,
+            subject: "انسحاب عامل من الطلب",
+            message: `قام ${req.user.firstName} ${req.user.lastName} بالانسحاب من طلب وظيفة "${job.title}"`,
+          });
+        }
+      } catch (err) {
+        console.error("Withdraw notification error:", err.message);
+      }
+    });
+
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      status: "success",
+      message: "Application withdrawn successfully",
+    });
+
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    throw err;
   }
-  res.status(200).json({
-    status: "success",
-    message: "Application withdrawn",
-  });
 });
 
 /* =====================================================
    MARK ARRIVAL (Worker)
 ===================================================== */
-// POST /applications/:id/:id/mark-arrival
+// POST /applications/:id/mark-arrival
 exports.markArrival = asyncHandler(async (req, res) => {
-  const application = await Application.findById(req.params.id).populate(
-    "jobId"
-  );
+  const applicationId = req.params.id;
+  const workerId = req.user._id;
+  const now = new Date();
 
-  if (!application) throw new ApiError("Application not found", 404);
+  /* ================= ATOMIC FETCH + VALIDATION ================= */
 
-  if (!application.workerId.equals(req.user._id)) {
-    throw new ApiError("Unauthorized", 403);
+  const application = await Application.findOne({
+    _id: applicationId,
+    workerId,
+    status: "accepted", // مهم
+    arrivalStatus: { $ne: "arrived" }, // idempotency
+  })
+    .populate({
+      path: "jobId",
+      select: "startDateTime endDateTime status title",
+    });
+
+  if (!application) {
+    throw new ApiError(
+      "Application not found or cannot mark arrival",
+      400
+    );
   }
 
   const job = application.jobId;
+
+  /* ================= JOB STATUS ================= */
 
   if (job.status !== "in_progress") {
     throw new ApiError("Job has not started yet", 400);
   }
 
-  if (application.arrivalStatus === "arrived") {
-    throw new ApiError("Arrival already confirmed", 400);
+  /* ================= TIME WINDOW VALIDATION ================= */
+
+  const start = new Date(job.startDateTime);
+  const end = new Date(job.endDateTime);
+
+  if (now < start) {
+    throw new ApiError("Too early to mark arrival", 400);
   }
 
-  application.arrivalStatus = "arrived";
-  application.arrivedAt = new Date();
-  await application.save();
+  if (now > end) {
+    throw new ApiError("Job already ended", 400);
+  }
+
+  /* ================= UPDATE (ATOMIC) ================= */
+
+  const updated = await Application.findOneAndUpdate(
+    {
+      _id: applicationId,
+      workerId,
+      status: "accepted",
+      arrivalStatus: { $ne: "arrived" },
+    },
+    {
+      $set: {
+        arrivalStatus: "arrived",
+        arrivedAt: now,
+      },
+    },
+    { new: true }
+  );
+
+  if (!updated) {
+    throw new ApiError("Arrival already recorded", 400);
+  }
+
+  /* ================= RESPONSE ================= */
 
   res.status(200).json({
     status: "success",
     message: "Arrival confirmed",
+    data: {
+      applicationId: updated._id,
+      arrivedAt: updated.arrivedAt,
+    },
   });
 });
 
@@ -311,44 +640,141 @@ exports.markArrival = asyncHandler(async (req, res) => {
 ===================================================== */
 // POST /applications/:id/mark-no-show
 exports.markNoShow = asyncHandler(async (req, res) => {
-  const application = await Application.findById(req.params.id).populate(
-    "jobId"
-  );
+  const applicationId = req.params.id;
+  const employerId = req.user._id;
+  const now = new Date();
 
-  if (!application) throw new ApiError("Application not found", 404);
+  /* ================= TRANSACTION ================= */
 
-  const job = application.jobId;
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  if (!job.employerId.equals(req.user._id)) {
-    throw new ApiError("Unauthorized", 403);
+  try {
+    /* ================= GET APPLICATION ================= */
+
+    const application = await Application.findOne({
+      _id: applicationId,
+      status: "accepted",
+      arrivalStatus: { $ne: "arrived" }, // يمنع conflict
+    })
+      .populate({
+        path: "jobId",
+        select: "employerId startDateTime endDateTime status title",
+      })
+      .session(session);
+
+    if (!application) {
+      throw new ApiError(
+        "Application not found or cannot be marked as no-show",
+        400
+      );
+    }
+
+    const job = application.jobId;
+
+    /* ================= AUTHORIZATION ================= */
+
+    if (!job.employerId.equals(employerId)) {
+      throw new ApiError("Unauthorized", 403);
+    }
+
+    /* ================= JOB STATUS ================= */
+
+    if (job.status !== "in_progress") {
+      throw new ApiError("Job has not started yet", 400);
+    }
+
+    /* ================= TIME VALIDATION ================= */
+
+    const start = new Date(job.startDateTime);
+    const end = new Date(job.endDateTime);
+
+    if (now < start) {
+      throw new ApiError("Too early to mark no-show", 400);
+    }
+
+    if (now > end) {
+      throw new ApiError("Job already ended", 400);
+    }
+
+    /* ================= UPDATE (ATOMIC) ================= */
+
+    const updated = await Application.findOneAndUpdate(
+      {
+        _id: applicationId,
+        status: "accepted",
+        arrivalStatus: { $nin: ["arrived", "no_show"] },
+      },
+      {
+        $set: {
+          arrivalStatus: "no_show",
+          status: "cancelled",
+          noShowAt: now,
+        },
+      },
+      { new: true, session }
+    );
+
+    if (!updated) {
+      throw new ApiError("No-show already recorded", 400);
+    }
+
+    /* ================= PENALTY ================= */
+
+    await penaltyService.reportIncident({
+      userId: updated.workerId,
+      jobId: job._id,
+      type: "worker_no_show",
+      severity: "high",
+    });
+
+    await session.commitTransaction();
+    session.endSession();
+
+    /* ================= RESPONSE ================= */
+
+    res.status(200).json({
+      status: "success",
+      message: "No-show recorded successfully",
+      data: {
+        applicationId: updated._id,
+        noShowAt: updated.noShowAt,
+      },
+    });
+
+    /* ================= NOTIFICATIONS ================= */
+
+    setImmediate(async () => {
+      try {
+        const worker = await User.findById(updated.workerId).select(
+          "fcmTokens email"
+        );
+
+        if (worker?.fcmTokens && worker.fcmTokens.length > 0) {
+          await sendNotificationNow({
+            userId: worker._id,
+            type: "no_show_recorded",
+            title: "تم تسجيل غيابك",
+            message: `تم تسجيلك كـ غائب في وظيفة "${job.title}"`,
+            relatedJobId: job._id,
+          });
+        } else if (worker?.email) {
+          await sendEmail({
+            Email: worker.email,
+            subject: "تم تسجيل غيابك",
+            message: `تم تسجيلك كـ غائب في وظيفة "${job.title}"`,
+          });
+        }
+      } catch (err) {
+        console.error("No-show notification error:", err.message);
+      }
+    });
+
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    throw err;
   }
-
-  if (job.status !== "in_progress") {
-    throw new ApiError("Job has not started yet", 400);
-  }
-
-  if (application.arrivalStatus === "no_show") {
-    throw new ApiError("No-show already recorded", 400);
-  }
-
-  application.arrivalStatus = "no_show";
-  application.status = "cancelled";
-  application.noShowAt = new Date();
-  await application.save();
-
-  const worker = await User.findById(application.workerId);
-
-  await penaltyService.reportIncident({
-    userId: worker._id,
-    jobId: job._id,
-    type: "worker_no_show",
-    severity: "high",
-  });
-
-  res.status(200).json({
-    status: "success",
-    message: "No-show recorded",
-  });
 });
 
 /* =====================================================
@@ -356,35 +782,80 @@ exports.markNoShow = asyncHandler(async (req, res) => {
 ===================================================== */
 // GET applications/jobs/:id
 exports.getApplicationsForJob = asyncHandler(async (req, res) => {
-  const job = await Job.findById(req.params.id);
-  if (!job) throw new ApiError("Job not found", 404);
+  const jobId = req.params.id;
+  const employerId = req.user._id;
 
-  if (!job.employerId.equals(req.user._id)) {
-    throw new ApiError("Unauthorized", 403);
+  let { page = 1, limit = 10, status } = req.query;
+
+  page = Math.max(1, parseInt(page));
+  limit = Math.min(50, parseInt(limit));
+  const skip = (page - 1) * limit;
+
+  /* ================= GET JOB ================= */
+
+  const job = await Job.findOne({
+    _id: jobId,
+    employerId,
+  }).select("_id");
+
+  if (!job) {
+    throw new ApiError("Job not found or unauthorized", 404);
   }
 
-  const applications = await Application.find({ jobId: job._id })
-    .populate("workerId", "firstName lastName city profileImage");
+  /* ================= FILTER ================= */
 
-  const workerProfiles = await WorkerProfile.find({
-    userId: { $in: applications.map((app) => app.workerId._id) },
-  }).select("pastExperience experienceYears expectedHourlyRate");
+  const filter = { jobId };
 
-  const applicationsWithProfiles = applications.map((app) => {
-    const profile = workerProfiles.find((wp) =>
-      wp.userId.equals(app.workerId._id)
-    );
+  if (status) {
+    filter.status = status; // pending / accepted / rejected
+  }
 
-    return {
-      ...app.toObject(),
-      workerProfile: profile || null,
-    };
-  });
+  /* ================= GET APPLICATIONS ================= */
+
+  const applications = await Application.find(filter)
+    .select("status workerId createdAt arrivalStatus")
+    .populate("workerId", "firstName lastName city profileImage")
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
+
+  /* ================= GET WORKER PROFILES (OPTIMIZED) ================= */
+
+  const workerIds = applications.map((app) => app.workerId._id);
+
+  const profiles = await WorkerProfile.find({
+    userId: { $in: workerIds },
+  })
+    .select("userId pastExperience experienceYears expectedHourlyRate")
+    .lean();
+
+  const profileMap = new Map(
+    profiles.map((p) => [p.userId.toString(), p])
+  );
+
+  /* ================= MERGE ================= */
+
+  const data = applications.map((app) => ({
+    ...app,
+    workerProfile: profileMap.get(app.workerId._id.toString()) || null,
+  }));
+
+  /* ================= COUNT ================= */
+
+  const total = await Application.countDocuments(filter);
+
+  /* ================= RESPONSE ================= */
 
   res.status(200).json({
     status: "success",
-    results: applicationsWithProfiles.length,
-    data: applicationsWithProfiles,
+    page,
+    results: data.length,
+    totalResults: total,
+    totalPages: Math.ceil(total / limit),
+    hasNextPage: page * limit < total,
+    hasPrevPage: page > 1,
+    data,
   });
 });
 
@@ -393,16 +864,160 @@ exports.getApplicationsForJob = asyncHandler(async (req, res) => {
 ===================================================== */
 // GET /applications/my
 exports.getMyApplications = asyncHandler(async (req, res) => {
-  const applications = await Application.find({ workerId: req.user._id })
-    .populate(
-      "jobId",
-      "title employerId startDateTime endDateTime status details location"
-    )
-    .sort({ createdAt: -1 });
+  const workerId = req.user._id;
+
+  let { page = 1, limit = 10, status } = req.query;
+
+  page = Math.max(1, parseInt(page));
+  limit = Math.min(50, parseInt(limit));
+  const skip = (page - 1) * limit;
+
+  const matchStage = {
+    workerId: new mongoose.Types.ObjectId(workerId),
+  };
+
+  if (status) {
+    matchStage.status = status;
+  }
+
+  const now = new Date();
+
+  const pipeline = [
+    { $match: matchStage },
+
+    /* ================= JOIN JOB ================= */
+    {
+      $lookup: {
+        from: "jobs",
+        localField: "jobId",
+        foreignField: "_id",
+        as: "job",
+      },
+    },
+    { $unwind: "$job" },
+
+    /* ================= DERIVED FIELDS ================= */
+    {
+      $addFields: {
+        /* === BASIC STATES === */
+        isUpcoming: { $gt: ["$job.startDateTime", now] },
+        isCompleted: { $eq: ["$job.status", "completed"] },
+        isActive: {
+          $and: [
+            { $lte: ["$job.startDateTime", now] },
+            { $gte: ["$job.endDateTime", now] },
+          ],
+        },
+
+        /* === 1. isLate === */
+        isLate: {
+          $and: [
+            { $eq: ["$arrivalStatus", "not_arrived"] },
+            {
+              $gt: [
+                now,
+                {
+                  $add: ["$job.startDateTime", 15 * 60 * 1000], // 15 min grace
+                },
+              ],
+            },
+          ],
+        },
+
+        /* === 2. canWithdraw === */
+        canWithdraw: {
+          $and: [
+            { $in: ["$status", ["pending"]] },
+            { $gt: ["$job.startDateTime", now] },
+          ],
+        },
+
+        /* === 3. canCheckIn === */
+        canCheckIn: {
+          $and: [
+            { $eq: ["$status", "accepted"] },
+            { $ne: ["$arrivalStatus", "arrived"] },
+            { $eq: ["$job.status", "in_progress"] },
+            { $lte: ["$job.startDateTime", now] },
+            { $gte: ["$job.endDateTime", now] },
+          ],
+        },
+
+        /* === 4. progressPercentage === */
+        progressPercentage: {
+          $cond: [
+            { $lte: ["$job.startDateTime", now] },
+            {
+              $min: [
+                100,
+                {
+                  $multiply: [
+                    {
+                      $divide: [
+                        { $subtract: [now, "$job.startDateTime"] },
+                        {
+                          $subtract: [
+                            "$job.endDateTime",
+                            "$job.startDateTime",
+                          ],
+                        },
+                      ],
+                    },
+                    100,
+                  ],
+                },
+              ],
+            },
+            0,
+          ],
+        },
+      },
+    },
+
+    /* ================= PROJECTION ================= */
+    {
+      $project: {
+        status: 1,
+        arrivalStatus: 1,
+        createdAt: 1,
+
+        isUpcoming: 1,
+        isCompleted: 1,
+        isActive: 1,
+        isLate: 1,
+        canWithdraw: 1,
+        canCheckIn: 1,
+        progressPercentage: { $round: ["$progressPercentage", 0] },
+
+        job: {
+          _id: "$job._id",
+          title: "$job.title",
+          startDateTime: "$job.startDateTime",
+          endDateTime: "$job.endDateTime",
+          status: "$job.status",
+          location: "$job.location",
+        },
+      },
+    },
+
+    { $sort: { createdAt: -1 } },
+    { $skip: skip },
+    { $limit: limit },
+  ];
+
+  const [data, total] = await Promise.all([
+    Application.aggregate(pipeline),
+    Application.countDocuments(matchStage),
+  ]);
 
   res.status(200).json({
     status: "success",
-    results: applications.length,
-    data: applications,
+    page,
+    results: data.length,
+    totalResults: total,
+    totalPages: Math.ceil(total / limit),
+    hasNextPage: page * limit < total,
+    hasPrevPage: page > 1,
+    data,
   });
 });

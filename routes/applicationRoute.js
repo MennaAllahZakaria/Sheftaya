@@ -53,7 +53,7 @@ router.put(
 );
 // Mark arrival for a job (Worker)  
 router.post(
-    "/applications/:id/mark-arrival", 
+    "/mark-arrival/:id", 
     protect, allowedTo("worker"),
     idValidator, 
     markArrival

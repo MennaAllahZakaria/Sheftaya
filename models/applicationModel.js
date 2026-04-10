@@ -27,6 +27,7 @@ const applicationSchema = new mongoose.Schema(
       default: "pending",
       index: true,
     },
+    rejectReason: String,
 
     arrivalStatus: {
       type: String,
