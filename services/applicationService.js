@@ -457,7 +457,7 @@ exports.withdrawApplication = asyncHandler(async (req, res) => {
     const application = await Application.findOne({
       _id: applicationId,
       workerId,
-      status: { $nin: ["cancelled", "rejected", "accepted"] }, // idempotent
+      status: { $in: ["accepted" , "pending"] }, // idempotent
     })
       .populate({
         path: "jobId",
@@ -927,7 +927,7 @@ exports.getMyApplications = asyncHandler(async (req, res) => {
         /* === 2. canWithdraw === */
         canWithdraw: {
           $and: [
-            { $in: ["$status", ["pending"]] },
+            { $in: ["$status", ["pending", "accepted"]] },
             { $gt: ["$job.startDateTime", now] },
           ],
         },

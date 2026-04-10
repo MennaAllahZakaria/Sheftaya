@@ -5,6 +5,7 @@ const Job = require("../models/jobModel");
 const Application = require("../models/applicationModel");
 const IdentityVerification = require("../models/identityVerificationModel");
 const WorkerProfile = require("../models/workerProfileModel");
+const EmployerProfile = require("../models/employerProfileModel");
 const ApiError = require("../utils/apiError");
 const penaltyService = require("../services/penaltyService");
 const {
@@ -266,7 +267,7 @@ exports.getActiveJobs = asyncHandler(async (req, res) => {
 
   const jobsQuery = Job.find(filter)
     .select(
-      "title place location startDateTime dailyWorkHours pricePerHour requiredWorkers acceptedWorkersCount experienceLevel status requiredSkills JobImages"
+      "title place location startDateTime dailyWorkHours pricePerHour requiredWorkers acceptedWorkersCount experienceLevel status requiredSkills JobImages companyDetails"
     )
     .sort(sort)
     .skip(skip)
@@ -378,7 +379,7 @@ exports.getMyJobs = asyncHandler(async (req, res) => {
 
   if (role === "employer") {
     const jobs = await Job.find({ employerId: userId })
-      .select("title startDateTime pricePerHour status")
+      .select("title details startDateTime dailyWorkHours location pricePerHour status requiredWorkers acceptedWorkersCount JobImages")
       .sort({ startDateTime: -1 })
       .lean();
 
@@ -395,7 +396,7 @@ exports.getMyJobs = asyncHandler(async (req, res) => {
       status: { $ne: "rejected" }
     })
       .select("status arrivalStatus jobId")
-      .populate("jobId", "title startDateTime pricePerHour status")
+      .populate("jobId", "title details startDateTime dailyWorkHours location pricePerHour status JobImages")
       .sort({ createdAt: -1 })
       .lean();
 
