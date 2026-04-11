@@ -885,7 +885,7 @@ exports.getMyApplications = asyncHandler(async (req, res) => {
   const pipeline = [
     { $match: matchStage },
 
-    /* ================= JOIN JOB ================= */
+    /* ================= JOB ================= */
     {
       $lookup: {
         from: "jobs",
@@ -896,20 +896,38 @@ exports.getMyApplications = asyncHandler(async (req, res) => {
     },
     { $unwind: "$job" },
 
-    /* ================= DERIVED FIELDS ================= */
+    /* ================= REPORT ================= */
+    {
+      $lookup: {
+        from: "reports",
+        localField: "_id",
+        foreignField: "applicationId",
+        as: "report",
+      },
+    },
+    {
+      $unwind: {
+        path: "$report",
+        preserveNullAndEmptyArrays: true,
+      },
+    },
+
+    /* ================= DERIVED ================= */
     {
       $addFields: {
-        /* === BASIC STATES === */
+        /* ===== BASIC ===== */
         isUpcoming: { $gt: ["$job.startDateTime", now] },
+
         isCompleted: { $eq: ["$job.status", "completed"] },
+
         isActive: {
           $and: [
-            { $lte: ["$job.startDateTime", now] },
-            { $gte: ["$job.endDateTime", now] },
+            { $eq: ["$status", "accepted"] },
+            { $eq: ["$job.status", "in_progress"] },
           ],
         },
 
-        /* === 1. isLate === */
+        /* ===== LATE ===== */
         isLate: {
           $and: [
             { $eq: ["$arrivalStatus", "not_arrived"] },
@@ -917,14 +935,14 @@ exports.getMyApplications = asyncHandler(async (req, res) => {
               $gt: [
                 now,
                 {
-                  $add: ["$job.startDateTime", 15 * 60 * 1000], // 15 min grace
+                  $add: ["$job.startDateTime", 15 * 60 * 1000],
                 },
               ],
             },
           ],
         },
 
-        /* === 2. canWithdraw === */
+        /* ===== WITHDRAW ===== */
         canWithdraw: {
           $and: [
             { $in: ["$status", ["pending", "accepted"]] },
@@ -932,7 +950,7 @@ exports.getMyApplications = asyncHandler(async (req, res) => {
           ],
         },
 
-        /* === 3. canCheckIn === */
+        /* ===== CHECK-IN ===== */
         canCheckIn: {
           $and: [
             { $eq: ["$status", "accepted"] },
@@ -943,7 +961,7 @@ exports.getMyApplications = asyncHandler(async (req, res) => {
           ],
         },
 
-        /* === 4. progressPercentage === */
+        /* ===== PROGRESS ===== */
         progressPercentage: {
           $cond: [
             { $lte: ["$job.startDateTime", now] },
@@ -971,6 +989,60 @@ exports.getMyApplications = asyncHandler(async (req, res) => {
             0,
           ],
         },
+
+        /* ===== DISPLAY STATUS ===== */
+        displayStatus: {
+          $switch: {
+            branches: [
+              /* rejected */
+              {
+                case: { $eq: ["$status", "rejected"] },
+                then: "rejected",
+              },
+
+              /* report under review */
+              {
+                case: { $eq: ["$report.status", "under_review"] },
+                then: "reportUnderReview",
+              },
+
+              /* report resolved */
+              {
+                case: { $eq: ["$report.status", "resolved"] },
+                then: "reportResolved",
+              },
+
+              /* completed */
+              {
+                case: { $eq: ["$job.status", "completed"] },
+                then: "completed",
+              },
+
+              /* active */
+              {
+                case: {
+                  $and: [
+                    { $eq: ["$status", "accepted"] },
+                    { $eq: ["$job.status", "in_progress"] },
+                  ],
+                },
+                then: "active",
+              },
+
+              /* accepted */
+              {
+                case: {
+                  $and: [
+                    { $eq: ["$status", "accepted"] },
+                    { $gt: ["$job.startDateTime", now] },
+                  ],
+                },
+                then: "accepted",
+              },
+            ],
+            default: "$status",
+          },
+        },
       },
     },
 
@@ -987,7 +1059,11 @@ exports.getMyApplications = asyncHandler(async (req, res) => {
         isLate: 1,
         canWithdraw: 1,
         canCheckIn: 1,
-        progressPercentage: { $round: ["$progressPercentage", 0] },
+        displayStatus: 1,
+
+        progressPercentage: {
+          $round: ["$progressPercentage", 0],
+        },
 
         job: {
           _id: "$job._id",
