@@ -377,18 +377,54 @@ exports.getMyJobs = asyncHandler(async (req, res) => {
 
   let data = [];
 
+  /* ================= EMPLOYER ================= */
+
   if (role === "employer") {
     const jobs = await Job.find({ employerId: userId })
-      .select("title details startDateTime dailyWorkHours location pricePerHour status requiredWorkers acceptedWorkersCount JobImages")
+      .select(`
+        title
+        details
+        place
+        createdAt
+        startDateTime
+        dailyWorkHours
+        location
+        pricePerHour
+        status
+        requiredWorkers
+        acceptedWorkersCount
+        JobImages
+        companyDetails
+        payment
+      `)
       .sort({ startDateTime: -1 })
       .lean();
 
-    data = jobs.map(job => ({
-      job,
-      applicationStatus: null,
-      arrivalStatus: null
-    }));
+    data = jobs.map(job => {
+      let jobState = "no_workers_selected";
+
+      if (job.acceptedWorkersCount > 0) {
+        if (job.payment?.status === "paid") {
+          jobState = "workers_selected_paid";
+        } else {
+          jobState = "workers_selected_unpaid";
+        }
+      }
+
+      return {
+        title: job.title,
+        place: job.place || job.location?.mainPlace,
+        postedAt: job.createdAt,
+        jobState,
+
+        job, // لو عايزة باقي التفاصيل
+        applicationStatus: null,
+        arrivalStatus: null
+      };
+    });
   }
+
+  /* ================= WORKER ================= */
 
   if (role === "worker") {
     const applications = await Application.find({
@@ -396,11 +432,27 @@ exports.getMyJobs = asyncHandler(async (req, res) => {
       status: { $ne: "rejected" }
     })
       .select("status arrivalStatus jobId")
-      .populate("jobId", "title details startDateTime dailyWorkHours location pricePerHour status JobImages")
+      .populate("jobId", `
+        title
+        details
+        place
+        createdAt
+        startDateTime
+        dailyWorkHours
+        location
+        pricePerHour
+        status
+        JobImages
+        companyDetails
+      `)
       .sort({ createdAt: -1 })
       .lean();
 
     data = applications.map(app => ({
+      title: app.jobId?.title,
+      place: app.jobId?.place || app.jobId?.location?.mainPlace,
+      postedAt: app.jobId?.createdAt,
+
       job: app.jobId,
       applicationStatus: app.status,
       arrivalStatus: app.arrivalStatus
