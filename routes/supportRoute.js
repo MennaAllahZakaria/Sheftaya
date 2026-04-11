@@ -8,12 +8,11 @@ const {
     getMySupportRequests,
     closeSupportRequest,
     reopenSupportRequest,
-    uploadSupportImage,
 } = require("../services/supportService");
 
 const { protect, allowedTo } = require("../middleware/authMiddleware");
 
-const {uploadImageAndFile, attachUploadedLinks} = require("../middleware/uploadFileMiddleware");
+const {uploadImagesAndFiles, attachUploadedLinks} = require("../middleware/uploadFileMiddleware");
 
 const router = express.Router();
 
@@ -21,8 +20,8 @@ const router = express.Router();
 router.post(
     "/",
     protect,
-    allowedTo("student", "teacher", "admin"),
-    uploadImageAndFile, attachUploadedLinks,
+    allowedTo("employer", "worker", "admin"),
+    uploadImagesAndFiles, attachUploadedLinks,
     createSupportRequest
 );
 // ================= ALL USERS - GET ALL SUPPORT REQUESTS =================
@@ -36,7 +35,7 @@ router.get(
 router.get(
     "/my-requests",
     protect,
-    allowedTo("student", "teacher"),
+    allowedTo("employer", "worker"),
     getMySupportRequests
 );
 // ================= ALL USERS - GET A SUPPORT REQUEST =================
@@ -50,8 +49,8 @@ router.get(
 router.put(
     "/:id",
     protect,
-    allowedTo("admin" , "student", "teacher"),
-    uploadImageAndFile, attachUploadedLinks,
+    allowedTo("admin" , "employer", "worker"),
+    uploadImagesAndFiles, attachUploadedLinks,
     updateSupportRequest
 );
 
@@ -69,4 +68,5 @@ router.put(
     allowedTo("admin"),
     reopenSupportRequest
 );
+
 module.exports = router;

@@ -576,31 +576,6 @@ exports.updatePreferredLanguage = asyncHandler(async (req, res, next) => {
   });
 });
 
-exports.getLoggedInUser = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user._id);
-  if (!user) {
-    throw new ApiError("User not found", 404);
-  }
-  let worker= null;
-  if (user.role === "worker") {
-    worker = await WorkerProfile.findOne({ userId: user._id });
-  }
-  let employer = null;
-  if (user.role === "employer") {
-    employer = await EmployerProfile.findOne({ userId: user._id });
-  }
- 
- 
-  res.status(200).json({  
-    status: "success",
-    data:{
-      user,
-      profile: user.role === "worker" ? worker : employer,
-
-    }
-  });
-  
-});
 
 exports.updateImageProfile = asyncHandler(async (req, res, next) => {
   if (!req.files?.imageProfile) {

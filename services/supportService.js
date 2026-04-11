@@ -5,8 +5,6 @@ const ApiError = require("../utils/apiError");
 const { uploadSingleImage } = require("../middleware/uploadImageMiddleware");
 
 
-exports.uploadSupportImage = uploadSingleImage("image");
-
 // ===============================
 // 🎯 Create new support request
 // ===============================
@@ -18,7 +16,7 @@ exports.createSupportRequest = asyncHandler(async (req, res, next) => {
     if (!message) {
     return next(new ApiError("message is required", 400));
   }
-    const image = req.imageUrl || "";
+    const image = req.files && req.files.length > 0 ? req.files[0].path : "";
 
     const supportRequest = await Support.create({
     user: req.user._id,
