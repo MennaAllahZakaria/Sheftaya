@@ -41,6 +41,11 @@ const storage = new CloudinaryStorage({
       folder = "support_Images";
       resource_type = "image";
     } 
+    else if (file.fieldname === "reportImage") {
+      folder = "report_Images";
+      resource_type = "image";
+    }
+    
     return {
       folder,
       resource_type,
@@ -84,6 +89,11 @@ const fileFilter = (req, file, cb) => {
     return cb(new ApiError("Only images allowed for JobImages", 400), false);
   }
 
+  // report image → images only
+  if (file.fieldname === "reportImage" && !isImage) {
+    return cb(new ApiError("Only images allowed for reportImage", 400), false);
+  }
+
   cb(null, true);
 };
 
@@ -110,7 +120,8 @@ exports.uploadImagesAndFiles = upload.fields([
   { name: "healthCertificate", maxCount: 1 },
   { name: "companyImages", maxCount: 5 },
   { name: "JobImages", maxCount: 5 },
-  { name: "image" , maxCount:1 }
+  { name: "image" , maxCount:1 },
+  { name: "reportImage" , maxCount:1 },
 ]);
 
 /* =================================================
