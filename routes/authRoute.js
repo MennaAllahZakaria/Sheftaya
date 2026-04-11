@@ -15,7 +15,10 @@ const {
         resetPassword,
         changePassword,
         getLoggedInUser,
-        updateFCMToken
+        updateFCMToken,
+        updatePreferredLanguage,
+        getLoggedInUser,
+        updateImageProfile
       } = require("../services/authService");
 
 
@@ -147,10 +150,15 @@ router.get(
   getLoggedInUser
 );
 
-router.put(
-  "/update-fcm-tokens",
-  protect,
-  updateFCMToken
-);
+// ================= UPDATE PREFERRED LANGUAGE =================
+router.patch("/updatePreferredLanguage",protect, updatePreferredLanguage);
+
+//================== GET LOGGED IN USER DATA ===================
+router.get("/me",protect,getLoggedInUser);
+
+//================== UPDATE IMAGE PROFILE ===================
+router.patch("/updateImageProfile", protect, uploadImagesAndFiles, attachUploadedLinks, updateImageProfile);
+
+
 
 module.exports = router;
