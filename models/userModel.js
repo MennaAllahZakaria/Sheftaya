@@ -81,6 +81,14 @@ const userSchema = new mongoose.Schema(
       enum: ["pending", "active", "suspended"], 
       default: "pending",
     },
+    rating: {
+      type: Number,
+      default: 0,
+    },
+    ratingAverage: {
+      type: Number,
+      default: 0,
+    },
 
   },
   { timestamps: true }

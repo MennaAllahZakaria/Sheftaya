@@ -7,6 +7,7 @@ const shiftRoute = require("./shiftRoute");
 const NotificationRoute = require("./notificationRoute");
 const SupportRoute = require("./supportRoute")
 const ReportRoute = require("./reportRoute");
+const ReviewRoute = require("./reviewRoute");
 
 const mountRoutes = (app) => {
     app.use((req, res, next) => {
@@ -42,6 +43,7 @@ app.use("/shifts", shiftRoute);
 app.use("/notifications", NotificationRoute);
 app.use("/support", SupportRoute);
 app.use("/reports", ReportRoute);
+app.use("/reviews", ReviewRoute);
 
 app.use("/cornJobs", notificationCron);
 
