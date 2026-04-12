@@ -13,7 +13,7 @@ const {
   scheduleNotification
 } = require("../services/notificationService");
 
-const {sendEmail}= require("../utils/sendEmail");
+const sendEmail = require("../utils/sendEmail");
 /* =====================================================
    CREATE JOB (Draft)
 ===================================================== */

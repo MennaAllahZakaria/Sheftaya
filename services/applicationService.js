@@ -15,7 +15,7 @@ const {
 
 const {handleWorkerAcceptedNotifications , handleWorkerRejectedNotifications } = require("../utils/notificationHandler");
 
-const {sendEmail}= require("../utils/sendEmail");
+const sendEmail= require("../utils/sendEmail");
 
 /* =====================================================
    APPLY FOR JOB (Worker)
@@ -147,14 +147,14 @@ exports.applyForJob = asyncHandler(async (req, res) => {
             userId: job.employerId._id,
             type: "new_application",
             title: "عامل جديد قدم لوظيفتك",
-            message: `تم التقديم من ${req.user.firstName} ${req.user.lastName}`,
+            message: `تم التقديم من ${req.user.firstName} ${req.user.lastName} على وظيفتك "${job.title}"`,
             relatedJobId: job._id,
           });
         } else if (job.employerId?.email) {
           await sendEmail({
             Email: job.employerId.email,
             subject: "عامل جديد قدم لوظيفتك",
-            message: `تم التقديم من ${req.user.firstName} ${req.user.lastName}`,
+            message: `تم التقديم من ${req.user.firstName} ${req.user.lastName} على وظيفتك "${job.title}"`,
           });
         }
       } catch (err) {
