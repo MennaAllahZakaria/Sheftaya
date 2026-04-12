@@ -43,6 +43,18 @@ exports.createReport = asyncHandler(async (req, res) => {
     throw new ApiError("Already reported", 400);
   }
 
+  // update application status to "reportUnderReview" if not already
+  if (application.status !== "reportUnderReview") {
+    application.status = "reportUnderReview";
+    await application.save();
+  }
+
+  // update job status to "reportUnderReview" if not already
+  if (application.jobId.status !== "reportUnderReview") {
+    application.jobId.status = "reportUnderReview";
+    await application.jobId.save();
+  }
+
   const report = await Report.create({
     applicationId,
     reporter: reporterId,
@@ -157,6 +169,17 @@ exports.resolveReport = asyncHandler(async (req, res) => {
   report.status = "resolved";
   await report.save();
 
+  // update job and application status if not already
+  const application = await Application.findById(report.applicationId).populate("jobId");
+  if (application.status !== "reportResolved") {
+    application.status = "reportResolved";
+    await application.save();
+  }
+  if (application.jobId.status !== "reportResolved") {
+    application.jobId.status = "reportResolved";
+    await application.jobId.save();
+  }
+
   // async penalty (non-blocking)
   setImmediate(async () => {
     try {
@@ -189,6 +212,17 @@ exports.rejectReport = asyncHandler(async (req, res) => {
 
   report.status = "rejected";
   await report.save();
+
+  // update job and application status if not already
+  const application = await Application.findById(report.applicationId).populate("jobId");
+  if (application.status !== "rejected") {
+    application.status = "rejected";
+    await application.save();
+  }
+  if (application.jobId.status !== "rejected") {
+    application.jobId.status = "rejected";
+    await application.jobId.save();
+  }
 
   res.status(200).json({
     status: "success",

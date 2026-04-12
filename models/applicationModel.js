@@ -23,6 +23,8 @@ const applicationSchema = new mongoose.Schema(
         "accepted",    // اتقبل
         "rejected",    // اترفض
         "cancelled",   // العامل انسحب
+        "reportUnderReview", // في حالة ان في تقرير اتعمل على التقديم ده، لسه بيتراجع
+        "reportResolved", // في حالة ان التقرير اتراجع واتحل
       ],
       default: "pending",
       index: true,

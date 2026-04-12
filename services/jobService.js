@@ -8,6 +8,7 @@ const WorkerProfile = require("../models/workerProfileModel");
 const EmployerProfile = require("../models/employerProfileModel");
 const ApiError = require("../utils/apiError");
 const penaltyService = require("../services/penaltyService");
+const Report = require("../models/reportModel");
 const {
   sendNotificationNow,
   scheduleNotification
@@ -371,6 +372,32 @@ exports.getJobDetails = asyncHandler(async (req, res) => {
    GET MY JOBS (Employer & Worker)
 ===================================================== */
 
+const resolveJobStatus = (job, app = null) => {
+  if (!job) return null;
+
+  // ================= JOB LEVEL =================
+  if (job.status === "completed") return "completed";
+  if (job.status === "reportUnderReview") return "report_under_review";
+  if (job.status === "reportResolved") return "report_resolved";
+
+  // ================= WORKER LEVEL =================
+  if (app) {
+    if (app.status === "accepted") return "accepted";
+    if (app.status === "rejected") return "rejected";
+    return "pending";
+  }
+
+  // ================= EMPLOYER VIEW =================
+  if (job.acceptedWorkersCount > 0) {
+    return job.payment?.status === "paid"
+      ? "workers_selected_paid"
+      : "workers_selected_unpaid";
+  }
+
+  return "active";
+};
+
+
 exports.getMyJobs = asyncHandler(async (req, res) => {
   const userId = req.user._id;
   const role = req.user.role;
@@ -401,25 +428,19 @@ exports.getMyJobs = asyncHandler(async (req, res) => {
       .lean();
 
     data = jobs.map(job => {
-      let jobState = "no_workers_selected";
-
-      if (job.acceptedWorkersCount > 0) {
-        if (job.payment?.status === "paid") {
-          jobState = "workers_selected_paid";
-        } else {
-          jobState = "workers_selected_unpaid";
-        }
-      }
+      const finalStatus = resolveJobStatus(job);
 
       return {
         title: job.title,
         place: job.place || job.location?.mainPlace,
         postedAt: job.createdAt,
-        jobState,
 
-        job, // لو عايزة باقي التفاصيل
+        finalStatus, // unified status
+        jobStatus: job.status,
+        job,
         applicationStatus: null,
-        arrivalStatus: null
+        arrivalStatus: null,
+        appliedAt: null
       };
     });
   }
@@ -431,7 +452,7 @@ exports.getMyJobs = asyncHandler(async (req, res) => {
       workerId: userId,
       status: { $ne: "rejected" }
     })
-      .select("status arrivalStatus jobId")
+      .select("status arrivalStatus jobId createdAt employerAccepted employerAcceptedAt")
       .populate("jobId", `
         title
         details
@@ -444,19 +465,29 @@ exports.getMyJobs = asyncHandler(async (req, res) => {
         status
         JobImages
         companyDetails
+        acceptedWorkersCount
+        payment
       `)
       .sort({ createdAt: -1 })
       .lean();
 
-    data = applications.map(app => ({
-      title: app.jobId?.title,
-      place: app.jobId?.place || app.jobId?.location?.mainPlace,
-      postedAt: app.jobId?.createdAt,
+    data = applications.map(app => {
+      const job = app.jobId;
+      const finalStatus = resolveJobStatus(job, app);
 
-      job: app.jobId,
-      applicationStatus: app.status,
-      arrivalStatus: app.arrivalStatus
-    }));
+      return {
+        title: job?.title,
+        place: job?.place || job?.location?.mainPlace,
+        postedAt: job?.createdAt,
+        appliedAt: app.createdAt,
+
+        finalStatus,
+
+        job,
+        applicationStatus: app.status,
+        arrivalStatus: app.arrivalStatus
+      };
+    });
   }
 
   res.status(200).json({
