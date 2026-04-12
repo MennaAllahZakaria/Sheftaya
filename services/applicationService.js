@@ -56,7 +56,7 @@ exports.applyForJob = asyncHandler(async (req, res) => {
 
     const job = await Job.findOne({
       _id: jobId,
-      status: "open",
+      status: "active",
     })
       .select(
         "startDateTime endDateTime requiredWorkers acceptedWorkersCount applicantsCount employerId title"
@@ -194,7 +194,7 @@ exports.acceptWorker = asyncHandler(async (req, res) => {
     const job = await Job.findOne({
       _id: jobId,
       employerId,
-      status: { $in: ["open", "filled"] },
+      status: { $in: ["active", "filled"] },
     })
       .select(
         "requiredWorkers acceptedWorkersCount startDateTime endDateTime status title"
@@ -373,7 +373,7 @@ exports.rejectWorker = asyncHandler(async (req, res) => {
   const job = await Job.findOne({
     _id: jobId,
     employerId,
-    status: { $in: ["open", "filled"] },
+    status: { $in: ["active", "filled"] },
   }).select("title");
 
   if (!job) {
