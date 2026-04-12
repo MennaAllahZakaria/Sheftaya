@@ -58,7 +58,7 @@ const userSchema = new mongoose.Schema(
       type: Date,
     },
 
-    profileImage: String,
+    imageProfile: String,
 
     fcmTokens: [
       {
@@ -93,6 +93,15 @@ userSchema.pre("save", function (next) {
   if (this.birthDate && this.birthDate > new Date()) {
     return next(new Error("Invalid birthDate"));
   }
+});
+
+//@ dec remove "password" &"__v" from the output
+userSchema.set("toJSON", {
+  transform: function (doc, ret, options) {
+    delete ret.password; // remove "password" from the output
+    delete ret.__v; // remove "__v" from the output
+    return ret;
+  },
 });
 
 module.exports = mongoose.model("User", userSchema);

@@ -251,6 +251,10 @@ exports.verifySignupOtp = asyncHandler(async (req, res) => {
 
   let { userData, workerData, employerData, files } = payload;
 
+  if (files.imageProfile){
+    userData.imageProfile = files.imageProfile[0];
+  }
+
   if (typeof workerData === "string") workerData = JSON.parse(workerData);
   if (typeof employerData === "string") employerData = JSON.parse(employerData);
 
@@ -258,6 +262,8 @@ exports.verifySignupOtp = asyncHandler(async (req, res) => {
     ...userData,
     status: "active",
   });
+
+  user.password = undefined;
 
   await IdentityVerification.create({
     userId: user._id,
@@ -588,7 +594,7 @@ exports.updateImageProfile = asyncHandler(async (req, res, next) => {
   }
   const user = await User.findByIdAndUpdate(
     req.user._id,
-    { imageProfile: req.imageProfileUrl },
+    { imageProfile: req.uploadedFiles.imageProfile[0] },
     { new: true }
   );
   if (!user) {
