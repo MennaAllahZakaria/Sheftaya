@@ -266,8 +266,9 @@ exports.verifySignupOtp = asyncHandler(async (req, res) => {
     selfieImage: files?.selfieImage?.[0],
   });
 
+  let profileData = null;
   if (user.role === "worker") {
-    await WorkerProfile.create({
+   profileData = await WorkerProfile.create({
       userId: user._id,
       ...workerData,
       healthCertificate: files?.healthCertificate?.[0],
@@ -275,7 +276,7 @@ exports.verifySignupOtp = asyncHandler(async (req, res) => {
   }
 
   if (user.role === "employer") {
-    await EmployerProfile.create({
+   profileData = await EmployerProfile.create({
       userId: user._id,
       ...employerData,
       companyImages: files?.companyImages,
@@ -289,6 +290,10 @@ exports.verifySignupOtp = asyncHandler(async (req, res) => {
   res.status(200).json({
     status: "success",
     token,
+    data:{
+      user,
+      profile: profileData,
+    }
      
   });
 });
