@@ -306,10 +306,25 @@ exports.getJobDetails = asyncHandler(async (req, res) => {
   /* ================= GET JOB ================= */
 
   const job = await Job.findById(jobId)
-    .select(
-      "title place location startDateTime endDateTime dailyWorkHours pricePerHour requiredWorkers acceptedWorkersCount experienceLevel status requiredSkills JobImages employerId"
-    )
-    .populate("employerId", "firstName lastName")
+    .select(`
+      title
+      details
+      place
+      location
+      startDateTime
+      endDateTime
+      dailyWorkHours
+      pricePerHour
+      requiredWorkers
+      acceptedWorkersCount
+      experienceLevel
+      status
+      requiredSkills
+      JobImages
+      employerId
+      companyDetails
+    `)
+    .populate("employerId", "firstName lastName rating ratingAverage imageProfile")
     .lean();
 
   if (!job) {
@@ -322,28 +337,37 @@ exports.getJobDetails = asyncHandler(async (req, res) => {
     job.employerId &&
     job.employerId._id.toString() === userId.toString();
 
-  if (!isOwner && job.status !== "active") {
+  const allowedStatuses = ["active", "completed"];
+
+  if (!isOwner && !allowedStatuses.includes(job.status)) {
     throw new ApiError("You are not allowed to view this job", 403);
   }
 
-  /* ================= ROLE-BASED RESPONSE ================= */
+  /* ================= DERIVED DATA ================= */
 
-  let applications = undefined;
-  let myApplication = undefined;
+  const isFull = job.acceptedWorkersCount >= job.requiredWorkers;
 
-  /* ===== EMPLOYER (OWNER ONLY) ===== */
+  let applications;
+  let myApplication;
+
+  /* ================= EMPLOYER ================= */
+
   if (userRole === "employer" && isOwner) {
     applications = await Application.find({
       jobId: job._id,
-      status: { $in: ["pending", "accepted"] }, 
+      status: { $in: ["pending", "accepted"] },
     })
       .select("status createdAt workerId")
-      .populate("workerId", "firstName lastName city profileImage")
+      .populate(
+        "workerId",
+        "firstName lastName city imageProfile rating ratingAverage"
+      )
       .sort({ createdAt: -1 })
       .lean();
   }
 
-  /* ===== WORKER ===== */
+  /* ================= WORKER ================= */
+
   if (userRole === "worker") {
     myApplication = await Application.findOne({
       jobId: job._id,
@@ -353,18 +377,18 @@ exports.getJobDetails = asyncHandler(async (req, res) => {
       .lean();
   }
 
-  /* ================= RESPONSE SHAPING ================= */
-
-  const response = {
-    job,
-  };
-
-  if (applications) response.applications = applications;
-  if (myApplication) response.myApplication = myApplication;
+  /* ================= RESPONSE ================= */
 
   res.status(200).json({
     status: "success",
-    data: response,
+    data: {
+      job,
+      isFull,
+      isOwner,
+
+      ...(applications && { applications }),
+      ...(myApplication && { myApplication }),
+    },
   });
 });
 
