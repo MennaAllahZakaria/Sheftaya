@@ -607,3 +607,112 @@ exports.updateImageProfile = asyncHandler(async (req, res, next) => {
   });
 });
 
+
+const filterFields = (obj, allowedFields) => {
+  const newObj = {};
+  Object.keys(obj).forEach((key) => {
+    if (allowedFields.includes(key)) {
+      newObj[key] = obj[key];
+    }
+  });
+  return newObj;
+};
+
+/* ================= UPDATE USER ================= */
+
+exports.updateUserProfile = asyncHandler(async (req, res, next) => {
+  const userId = req.user._id;
+
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    /* ================= USER ================= */
+
+    const userFields = filterFields(req.body, [
+      "firstName",
+      "lastName",
+      "phone",
+      "city",
+      "birthDate",
+    ]);
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      userFields,
+      { new: true, session }
+    );
+
+    if (!user) {
+      throw new ApiError("User not found", 404);
+    }
+
+    let profile = null;
+
+    /* ================= WORKER ================= */
+
+    if (req.uploadedFiles?.healthCertificate) {
+      req.body.healthCertificate = req.uploadedFiles.healthCertificate[0];
+    }
+
+    if (user.role === "worker") {
+      const workerFields = filterFields(req.body, [
+        "education",
+        "professionalStatus",
+        "pastExperience",
+        "jobsLookedFor",
+        "experienceYears",
+        "availability",
+        "expectedHourlyRate",
+        "healthCertificate"
+      ]);
+
+      profile = await WorkerProfile.findOneAndUpdate(
+        { userId },
+        workerFields,
+        { new: true, session }
+      );
+    }
+
+    /* ================= EMPLOYER ================= */
+
+    if (req.uploadedFiles?.companyImages) {
+      req.body.companyImages = req.uploadedFiles.companyImages;
+    }
+
+    if (user.role === "employer") {
+      const employerFields = filterFields(req.body, [
+        "companyName",
+        "companyType",
+        "companyAddress",
+        "city",
+        "taxNumber",
+        "commercialRegisterNumber",
+        "contactPersonName",
+        "companyImages"
+      ]);
+
+      profile = await EmployerProfile.findOneAndUpdate(
+        { userId },
+        employerFields,
+        { new: true, session }
+      );
+    }
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        user,
+        profile
+      }
+    });
+
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    throw error;
+  }
+});

@@ -17,7 +17,8 @@ const {
         getLoggedInUser,
         updateFCMToken,
         updatePreferredLanguage,
-        updateImageProfile
+        updateImageProfile,
+        updateUserProfile
       } = require("../services/authService");
 
 
@@ -156,6 +157,9 @@ router.patch("/updatePreferredLanguage",protect, updatePreferredLanguage);
 
 //================== UPDATE IMAGE PROFILE ===================
 router.patch("/updateImageProfile", protect, uploadImagesAndFiles, attachUploadedLinks, updateImageProfile);
+
+//================== UPDATE USER PROFILE ===================
+router.put("/updateUserProfile", protect, uploadImagesAndFiles, attachUploadedLinks, updateUserProfile);
 
 
 
