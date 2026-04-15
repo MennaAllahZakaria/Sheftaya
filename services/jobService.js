@@ -418,7 +418,7 @@ const resolveJobStatus = (job, app = null) => {
       : "workers_selected_unpaid";
   }
 
-  return "active";
+  return "no_workers_selected";
 };
 
 

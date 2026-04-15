@@ -498,6 +498,14 @@ exports.changePassword = asyncHandler(async (req, res, next) => {
   user.passwordChangedAt = Date.now();
   await user.save();
 
+  res.status(200).json({
+    status: "success",
+    message: "Password changed successfully.",
+  });
+
+  setImmediate(async () => {
+    
+
     const message = `
       Your password has been changed successfully.
       If you did not perform this action, please contact support immediately.
@@ -512,11 +520,6 @@ exports.changePassword = asyncHandler(async (req, res, next) => {
   } catch (err) {
     console.error("Error sending password change notification email:", err.message);
   }
-
-
-  res.status(200).json({
-    status: "success",
-    message: "Password changed successfully.",
   });
 });
 
