@@ -12,8 +12,7 @@ exports.handleWorkerAcceptedNotifications = async (application, job) => {
   try {
     // notify worker
     if (
-      application.workerId.fcmTokens &&
-      application.workerId.fcmTokens.length > 0
+      application.workerId.fcmToken
     ) {
       await sendNotificationNow({
         userId: application.workerId,
@@ -60,8 +59,7 @@ exports.handleWorkerAcceptedNotifications = async (application, job) => {
 exports.handleWorkerRejectedNotifications = async (application, job) => {
   try {
     if (
-      application.workerId.fcmTokens &&
-      application.workerId.fcmTokens.length > 0
+      application.workerId.fcmToken
     ) {
       await sendNotificationNow({
         userId: application.workerId._id,

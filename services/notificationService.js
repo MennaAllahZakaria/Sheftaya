@@ -32,17 +32,14 @@ exports.sendNotificationNow = async ({
 }) => {
   const user = await User.findById(userId);
 
-  if (!user || !user.fcmTokens || user.fcmTokens.length === 0) {
+  if (!user || !user.fcmToken) {
     return null;
   }
-
-  for (const fcmTokenObj of user.fcmTokens) {
-    const { token } = fcmTokenObj;
     await sendFCM(token, {
         title,  
         body: message,
     });
-  }
+
     
 
   return Notification.create({

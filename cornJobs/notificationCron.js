@@ -18,14 +18,12 @@ const processScheduledNotifications = async () => {
         notif.userId
       );
 
-      if (user?.fcmTokens && user.fcmTokens.length > 0) {
-        for (const fcmTokenObj of user.fcmTokens) {
-          const { token } = fcmTokenObj;
-          await sendFCM(token, {
-            title: notif.title,
-            body: notif.message,
-          });
-        }
+      if (user?.fcmToken) {
+        await sendFCM(user.fcmToken, {
+          title: notif.title,
+          body: notif.body,
+          data: notif.data || {},
+        });
 
 
       }

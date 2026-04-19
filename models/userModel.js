@@ -60,13 +60,10 @@ const userSchema = new mongoose.Schema(
 
     imageProfile: String,
 
-    fcmTokens: [
-      {
-        token: { type: String },
-        platform: { type: String },
-        lastUsedAt: { type: Date },
-      },
-    ],
+    fcmToken: {
+      type: String,
+      default: null,
+    },
 
 
     discipline: {

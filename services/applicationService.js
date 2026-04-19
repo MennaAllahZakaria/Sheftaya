@@ -61,7 +61,7 @@ exports.applyForJob = asyncHandler(async (req, res) => {
       .select(
         "startDateTime endDateTime requiredWorkers acceptedWorkersCount applicantsCount employerId title"
       )
-      .populate("employerId", "firstName lastName email fcmTokens")
+      .populate("employerId", "firstName lastName email fcmToken")
       .session(session);
 
     if (!job) {
@@ -140,8 +140,7 @@ exports.applyForJob = asyncHandler(async (req, res) => {
     setImmediate(async () => {
       try {
         if (
-          job.employerId?.fcmTokens &&
-          job.employerId.fcmTokens.length > 0
+          job.employerId?.fcmToken
         ) {
           await sendNotificationNow({
             userId: job.employerId._id,
@@ -216,7 +215,7 @@ exports.acceptWorker = asyncHandler(async (req, res) => {
       jobId,
       status: "pending",
     })
-      .populate("workerId", "fcmTokens email")
+      .populate("workerId", "fcmToken email")
       .session(session);
 
     if (!application) {
@@ -318,8 +317,7 @@ exports.acceptWorker = asyncHandler(async (req, res) => {
     setImmediate(async () => {
       try {
         if (
-          application.workerId?.fcmTokens &&
-          application.workerId.fcmTokens.length > 0
+          application.workerId?.fcmToken
         ) {
           await sendNotificationNow({
             userId: workerId,
@@ -398,7 +396,7 @@ exports.rejectWorker = asyncHandler(async (req, res) => {
     {
       new: true,
     }
-  ).populate("workerId", "fcmTokens email");
+  ).populate("workerId", "fcmToken email");
 
   if (!application) {
     throw new ApiError("Application not found or already processed", 400);
@@ -417,7 +415,7 @@ exports.rejectWorker = asyncHandler(async (req, res) => {
     try {
       const worker = application.workerId;
 
-      if (worker?.fcmTokens && worker.fcmTokens.length > 0) {
+      if (worker?.fcmToken) {
         await sendNotificationNow({
           userId: worker._id,
           type: "job_rejected",
@@ -507,7 +505,7 @@ exports.withdrawApplication = asyncHandler(async (req, res) => {
     /* ================= GET EMPLOYER ================= */
 
     const employer = await User.findById(job.employerId).select(
-      "fcmTokens email"
+      "fcmToken email"
     );
 
     /* ================= NOTIFICATIONS (ASYNC NON-BLOCKING) ================= */
@@ -515,8 +513,7 @@ exports.withdrawApplication = asyncHandler(async (req, res) => {
     setImmediate(async () => {
       try {
         if (
-          employer?.fcmTokens &&
-          employer.fcmTokens.length > 0
+          employer?.fcmToken
         ) {
           await sendNotificationNow({
             userId: employer._id,
@@ -747,10 +744,10 @@ exports.markNoShow = asyncHandler(async (req, res) => {
     setImmediate(async () => {
       try {
         const worker = await User.findById(updated.workerId).select(
-          "fcmTokens email"
+          "fcmToken email"
         );
 
-        if (worker?.fcmTokens && worker.fcmTokens.length > 0) {
+        if (worker?.fcmToken) {
           await sendNotificationNow({
             userId: worker._id,
             type: "no_show_recorded",

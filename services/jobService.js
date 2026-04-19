@@ -686,7 +686,7 @@ exports.cancelJob = asyncHandler(async (req, res) => {
       status: "accepted"
     })
       .select("workerId")
-      .populate("workerId", "fcmTokens email")
+      .populate("workerId", "fcmToken email")
       .lean()
       .session(session);
 
@@ -699,8 +699,7 @@ exports.cancelJob = asyncHandler(async (req, res) => {
       applications.map(async (app) => {
         try {
           if (
-            app.workerId?.fcmTokens &&
-            app.workerId.fcmTokens.length > 0
+            app.workerId?.fcmToken
           ) {
             return sendNotificationNow({
               userId: app.workerId._id,
