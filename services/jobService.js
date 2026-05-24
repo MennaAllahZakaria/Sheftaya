@@ -862,7 +862,7 @@ const axios = require("axios");
  const getRecommendations = async (worker, jobs) => {
   try {
     const response = await axios.post(
-      "https://recommendation-system-shiftaya-production.up.railway.app/recommend",
+      "https://recommendation-system-shiftaya-production-3bd1.up.railway.app/recommend",
       {
         worker,
         jobs,
