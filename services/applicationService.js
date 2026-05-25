@@ -579,11 +579,6 @@ exports.markArrival = asyncHandler(async (req, res) => {
 
   const job = application.jobId;
 
-  /* ================= JOB STATUS ================= */
-
-  if (job.status !== "in_progress") {
-    throw new ApiError("Job has not started yet", 400);
-  }
 
   /* ================= TIME WINDOW VALIDATION ================= */
 

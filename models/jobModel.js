@@ -113,6 +113,8 @@ const jobSchema = new mongoose.Schema(
           "completed",
           "rejected",
           "accepted",
+          "in_progress",
+          "cancelled",
           "reportResolved",
           "reportUnderReview",
       ],
