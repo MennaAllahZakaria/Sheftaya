@@ -509,7 +509,8 @@ exports.getMyJobs = asyncHandler(async (req, res) => {
 
         job,
         applicationStatus: app.status,
-        arrivalStatus: app.arrivalStatus
+        arrivalStatus: app.arrivalStatus,
+        applicationId: app._id,
       };
     });
   }
