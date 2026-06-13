@@ -35,7 +35,7 @@ exports.onTheWay = asyncHandler(async (req, res) => {
     throw new ApiError("Application not accepted", 400);
   }
 
-  if (!app.jobId || app.jobId.status !== "confirmed") {
+  if (!app.jobId || app.jobId.status !== "active") {
     throw new ApiError("Job is not active", 400);
   }
 
@@ -74,7 +74,7 @@ exports.arrive = asyncHandler(async (req, res) => {
     throw new ApiError("Application not accepted", 400);
   }
 
-  if (!app.jobId || app.jobId.status !== "confirmed") {
+  if (!app.jobId || app.jobId.status !== "active") {
     throw new ApiError("Job is not active", 400);
   }
 
