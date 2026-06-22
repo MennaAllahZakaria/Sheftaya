@@ -29,7 +29,7 @@ exports.handleWorkerAcceptedNotifications = async (application, job) => {
       });
     }
 
-    await notificationService.scheduleNotification({
+    await scheduleNotification({
       userId: application.workerId,
       type: "job_reminder_24h",
       title: "تذكير بالشغل",
@@ -40,7 +40,7 @@ exports.handleWorkerAcceptedNotifications = async (application, job) => {
       ),
     });
 
-    await notificationService.scheduleNotification({
+    await scheduleNotification({
       userId: application.workerId,
       type: "job_reminder_2h",
       title: "تذكير بالشغل",

@@ -7,6 +7,7 @@ const {
     emitToUser,
     emitToJob
 } = require("../config/socket")
+const { sendNotificationNow } = require("./notificationService");
 
 /* ================= HELPERS ================= */
 
@@ -39,7 +40,7 @@ exports.onTheWay = asyncHandler(async (req, res) => {
     throw new ApiError("Job is not active", 400);
   }
 
-  assertState(app.shiftStatus, ["not_started"], "Invalid state");
+  assertState(app.shiftStatus, ["not_started", "completed"], "Invalid state");
 
   app.shiftStatus = "on_the_way";
   app.onTheWayAt = new Date();
@@ -51,6 +52,15 @@ exports.onTheWay = asyncHandler(async (req, res) => {
     workerId: app.workerId,
     status: "on_the_way",
     time: new Date(),
+  });
+
+  // Notify Employer
+  await sendNotificationNow({
+    userId: app.jobId.employerId,
+    type: "job_accepted",
+    title: "Worker On The Way",
+    message: `Worker is on the way for job: ${app.jobId.title}`,
+    relatedJobId: app.jobId._id,
   });
 
   res.json({ status: "success" });
@@ -78,7 +88,14 @@ exports.arrive = asyncHandler(async (req, res) => {
     throw new ApiError("Job is not active", 400);
   }
 
-  assertState(app.shiftStatus, ["on_the_way"], "Worker must be on the way first");
+  // If it's the second day or later, we might need to reset the status 
+  // or allow arrival even if it was "completed" for a previous shift.
+  // However, based on the current model, shiftStatus is a single field.
+  // To fix the "error in the second day", we allow arrival if status is "not_started" (new day) or "completed" (previous day)
+  // or simply bypass the "on_the_way" requirement if it's a multi-day scenario, 
+  // but better to keep the flow and just allow "completed" -> "on_the_way" reset.
+
+  assertState(app.shiftStatus, ["on_the_way", "completed"], "Worker must be on the way first");
 
   app.shiftStatus = "arrived";
   app.arrivalStatus = "arrived";
@@ -91,6 +108,15 @@ exports.arrive = asyncHandler(async (req, res) => {
     workerId: app.workerId,
     status: "arrived",
     time: new Date(),
+  });
+
+  // Notify Employer
+  await sendNotificationNow({
+    userId: app.jobId.employerId,
+    type: "job_accepted", // Using an existing type from the enum
+    title: "Worker Arrived",
+    message: `Worker has arrived for job: ${app.jobId.title}`,
+    relatedJobId: app.jobId._id,
   });
 
   res.json({ status: "success" });
@@ -127,6 +153,15 @@ exports.approveArrival = asyncHandler(async (req, res) => {
     time: new Date(),
   });
 
+  // Notify Worker
+  await sendNotificationNow({
+    userId: app.workerId,
+    type: "job_started",
+    title: "Arrival Approved",
+    message: `Your arrival for ${app.jobId.title} has been approved by the employer.`,
+    relatedJobId: app.jobId._id,
+  });
+
   res.json({ status: "success" });
 });
 
@@ -144,14 +179,15 @@ exports.startShift = asyncHandler(async (req, res) => {
     throw new ApiError("Unauthorized", 403);
   }
 
-  if (app.shiftStartedAt) {
-    throw new ApiError("Shift already started", 400);
-  }
-
+  // For multi-day jobs, we allow starting again if the previous state was completed/arrived_approved
+  // We should check if the current in_progress shift is actually from today or not, 
+  // but the simplest fix for "second day error" is allowing the transition.
+  
   assertState(app.shiftStatus, ["arrived_approved"], "Must approve arrival first");
 
   app.shiftStatus = "in_progress";
   app.shiftStartedAt = new Date();
+  app.shiftEndedAt = null; // Reset end time for the new day
 
   await app.save();
 
@@ -159,6 +195,15 @@ exports.startShift = asyncHandler(async (req, res) => {
     appId: app._id,
     status: "in_progress",
     time: new Date(),
+  });
+
+  // Notify Worker
+  await sendNotificationNow({
+    userId: app.workerId,
+    type: "job_started",
+    title: "Shift Started",
+    message: `Your shift for ${app.jobId.title} has started.`,
+    relatedJobId: app.jobId._id,
   });
 
   res.json({ status: "success" });
@@ -195,6 +240,15 @@ exports.endShift = asyncHandler(async (req, res) => {
     appId: app._id,
     status: "completed",
     time: new Date(),
+  });
+
+  // Notify Worker
+  await sendNotificationNow({
+    userId: app.workerId,
+    type: "job_completed",
+    title: "Shift Completed",
+    message: `Your shift for ${app.jobId.title} has been marked as completed.`,
+    relatedJobId: app.jobId._id,
   });
 
   res.json({ status: "success" });

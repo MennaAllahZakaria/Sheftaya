@@ -1,5 +1,5 @@
-const Notification = require("../models/notificationModel");
 const User = require("../models/userModel");
+const Notification = require("../models/notificationModel");
 const sendFCM = require("../utils/sendFCM");
 const asyncHandler = require("express-async-handler");
 const ApiError = require("../utils/apiError");
@@ -35,7 +35,7 @@ exports.sendNotificationNow = async ({
   if (!user || !user.fcmToken) {
     return null;
   }
-    await sendFCM(token, {
+    await sendFCM(user.fcmToken, {
         title,  
         body: message,
     });

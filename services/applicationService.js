@@ -552,79 +552,9 @@ exports.withdrawApplication = asyncHandler(async (req, res) => {
    MARK ARRIVAL (Worker)
 ===================================================== */
 // POST /applications/:id/mark-arrival
+// @deprecated: Use shiftService.arrive instead for socket support and multi-day compatibility
 exports.markArrival = asyncHandler(async (req, res) => {
-  const applicationId = req.params.id;
-  const workerId = req.user._id;
-  const now = new Date();
-
-  /* ================= ATOMIC FETCH + VALIDATION ================= */
-
-  const application = await Application.findOne({
-    _id: applicationId,
-    workerId,
-    status: "accepted", // مهم
-    arrivalStatus: { $ne: "arrived" }, // idempotency
-  })
-    .populate({
-      path: "jobId",
-      select: "startDateTime endDateTime status title",
-    });
-
-  if (!application) {
-    throw new ApiError(
-      "Application not found or cannot mark arrival",
-      400
-    );
-  }
-
-  const job = application.jobId;
-
-
-  /* ================= TIME WINDOW VALIDATION ================= */
-
-  const start = new Date(job.startDateTime);
-  const end = new Date(job.endDateTime);
-
-  if (now < start) {
-    throw new ApiError("Too early to mark arrival", 400);
-  }
-
-  if (now > end) {
-    throw new ApiError("Job already ended", 400);
-  }
-
-  /* ================= UPDATE (ATOMIC) ================= */
-
-  const updated = await Application.findOneAndUpdate(
-    {
-      _id: applicationId,
-      workerId,
-      status: "accepted",
-      arrivalStatus: { $ne: "arrived" },
-    },
-    {
-      $set: {
-        arrivalStatus: "arrived",
-        arrivedAt: now,
-      },
-    },
-    { new: true }
-  );
-
-  if (!updated) {
-    throw new ApiError("Arrival already recorded", 400);
-  }
-
-  /* ================= RESPONSE ================= */
-
-  res.status(200).json({
-    status: "success",
-    message: "Arrival confirmed",
-    data: {
-      applicationId: updated._id,
-      arrivedAt: updated.arrivedAt,
-    },
-  });
+  throw new ApiError("Please use /shifts/:id/arrive for marking arrival", 400);
 });
 
 /* =====================================================
