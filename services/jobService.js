@@ -545,10 +545,11 @@ exports.updateJob = asyncHandler(async (req, res) => {
     throw new ApiError("Job cannot be updated after accepting workers", 400);
   }
 
-  const now = new Date();
-  if (new Date(job.startDateTime) - now < 24 * 60 * 60 * 1000) {
-    throw new ApiError("Job cannot be updated less than 24 hours before start", 400);
-  }
+  // Removed the 24-hour restriction as per user request
+  // const now = new Date();
+  // if (new Date(job.startDateTime) - now < 24 * 60 * 60 * 1000) {
+  //   throw new ApiError("Job cannot be updated less than 24 hours before start", 400);
+  // }
 
   /* ================= UPDATE BASIC FIELDS ================= */
 
@@ -558,6 +559,8 @@ exports.updateJob = asyncHandler(async (req, res) => {
     "location",
     "startDateTime",
     "endDateTime",
+    "startTime", // Alias for startDateTime
+    "endTime",   // Alias for endDateTime
     "requiredWorkers",
     "experienceLevel",
     "details"
@@ -565,7 +568,13 @@ exports.updateJob = asyncHandler(async (req, res) => {
 
   allowedFields.forEach(field => {
     if (req.body[field] !== undefined) {
-      job[field] = req.body[field];
+      if (field === "startTime") {
+        job.startDateTime = req.body[field];
+      } else if (field === "endTime") {
+        job.endDateTime = req.body[field];
+      } else {
+        job[field] = req.body[field];
+      }
     }
   });
 
@@ -575,7 +584,7 @@ exports.updateJob = asyncHandler(async (req, res) => {
   let end = new Date(job.endDateTime);
 
   
-  if (req.body.startDateTime || req.body.endDateTime) {
+  if (req.body.startDateTime || req.body.endDateTime || req.body.startTime || req.body.endTime) {
     if (end <= start) {
       throw new ApiError("End time must be after start time", 400);
     }

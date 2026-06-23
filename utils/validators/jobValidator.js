@@ -73,13 +73,29 @@ exports.updateJobValidator=[
         .optional() 
         .isISO8601()
         .withMessage("Invalid start date and time"),
+    check("startTime")
+        .optional() 
+        .isISO8601()
+        .withMessage("Invalid start time"),
     check("endDateTime")
         .optional() 
         .isISO8601()
         .withMessage("Invalid end date and time")
         .custom((value, { req }) => {
-            if (req.check.startDateTime && new Date(value) <= new Date(req.check.startDateTime)) {
+            const start = req.body.startDateTime || req.body.startTime;
+            if (start && new Date(value) <= new Date(start)) {
                 throw new Error("End date and time must be after start date and time");
+            }
+            return true;
+        }),
+    check("endTime")
+        .optional() 
+        .isISO8601()
+        .withMessage("Invalid end time")
+        .custom((value, { req }) => {
+            const start = req.body.startDateTime || req.body.startTime;
+            if (start && new Date(value) <= new Date(start)) {
+                throw new Error("End time must be after start time");
             }
             return true;
         }),
