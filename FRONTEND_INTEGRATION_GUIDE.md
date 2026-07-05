@@ -2,6 +2,20 @@
 
 This document provides all the necessary information for the Frontend team to integrate with the Paymob payment system implemented in the Backend.
 
+## Architecture Overview
+
+The Backend follows a clean architecture pattern:
+- **Routes** (`/routes`) - Handle HTTP requests and call service functions
+- **Services** (`/services`) - Contain all business logic
+- **Models** (`/models`) - Define data schemas
+
+### Payment Services
+
+1. **`paymentService.js`** - Handles employer payment initiation, webhook processing, and refunds
+2. **`workerPayoutService.js`** - Handles worker payout details and payout processing
+3. **`paymobService.js`** - Wrapper for Paymob API interactions
+4. **`payoutService.js`** - Legacy payout service (being replaced by workerPayoutService)
+
 ## API Endpoints
 
 ### 1. Initiate Payment (Employer)
@@ -140,6 +154,238 @@ const checkPaymentStatus = async (jobId) => {
 
 ---
 
+### 3. Refund Payment
+
+**Endpoint**: `POST /api/payments/jobs/:jobId/refund`
+
+**Authentication**: Required (Bearer Token - Employer or Admin)
+
+**Headers**:
+```
+Authorization: Bearer {token}
+Content-Type: application/json
+```
+
+**Parameters**:
+- `jobId` (URL parameter): The ID of the job
+
+**Request Body**: Empty
+
+**Response** (Success - 200):
+```json
+{
+  "status": "success",
+  "message": "Refund initiated successfully",
+  "data": {
+    "jobId": "507f1f77bcf86cd799439011",
+    "status": "refunded",
+    "amount": 5000,
+    "transactionId": "abc123"
+  }
+}
+```
+
+---
+
+### 4. Register Worker Payout Details
+
+**Endpoint**: `POST /api/payouts/workers/details`
+
+**Authentication**: Required (Bearer Token - Worker)
+
+**Headers**:
+```
+Authorization: Bearer {token}
+Content-Type: application/json
+```
+
+**Request Body** (Mobile Wallet):
+```json
+{
+  "method": "mobile_wallet",
+  "mobileWalletNumber": "01020304050",
+  "walletIssuer": "vodafone"
+}
+```
+
+**Request Body** (Bank Card):
+```json
+{
+  "method": "bank_card",
+  "bankCardNumber": "1111-2222-3333-4444",
+  "bankCode": "CIB",
+  "bankName": "Commercial International Bank",
+  "bankTransactionType": "salary",
+  "fullName": "Ahmed Hassan"
+}
+```
+
+**Request Body** (Aman):
+```json
+{
+  "method": "aman",
+  "mobileWalletNumber": "01020304050",
+  "firstName": "Ahmed",
+  "lastName": "Hassan"
+}
+```
+
+**Response** (Success - 200):
+```json
+{
+  "status": "success",
+  "message": "Payout details updated successfully",
+  "data": {
+    "workerId": "507f1f77bcf86cd799439011",
+    "payoutDetails": {
+      "method": "mobile_wallet",
+      "mobileWalletNumber": "01020304050",
+      "walletIssuer": "vodafone"
+    }
+  }
+}
+```
+
+---
+
+### 5. Get Worker Payout Details
+
+**Endpoint**: `GET /api/payouts/workers/details`
+
+**Authentication**: Required (Bearer Token - Worker)
+
+**Headers**:
+```
+Authorization: Bearer {token}
+```
+
+**Response** (Success - 200):
+```json
+{
+  "status": "success",
+  "data": {
+    "workerId": "507f1f77bcf86cd799439011",
+    "payoutDetails": {
+      "method": "mobile_wallet",
+      "mobileWalletNumber": "01020304050",
+      "walletIssuer": "vodafone"
+    }
+  }
+}
+```
+
+---
+
+### 6. Process Job Payouts
+
+**Endpoint**: `POST /api/payouts/jobs/:jobId/process`
+
+**Authentication**: Required (Bearer Token - Employer or Admin)
+
+**Headers**:
+```
+Authorization: Bearer {token}
+Content-Type: application/json
+```
+
+**Parameters**:
+- `jobId` (URL parameter): The ID of the job
+
+**Request Body**: Empty
+
+**Response** (Success - 200):
+```json
+{
+  "status": "success",
+  "message": "Payouts processed successfully",
+  "data": {
+    "jobId": "507f1f77bcf86cd799439011",
+    "totalWorkers": 3,
+    "successful": 3,
+    "failed": 0,
+    "results": [
+      {
+        "workerId": "507f1f77bcf86cd799439012",
+        "status": "success",
+        "transactionId": "txn123",
+        "amount": 1000,
+        "disbursementStatus": "success"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 7. Get Payout Status
+
+**Endpoint**: `GET /api/payouts/jobs/:jobId/status`
+
+**Authentication**: Required (Bearer Token)
+
+**Headers**:
+```
+Authorization: Bearer {token}
+```
+
+**Response** (Success - 200):
+```json
+{
+  "status": "success",
+  "data": {
+    "jobId": "507f1f77bcf86cd799439011",
+    "title": "House Renovation",
+    "jobStatus": "completed",
+    "paymentStatus": "paid",
+    "amount": 5000,
+    "isCompleted": true,
+    "requiredWorkers": 3
+  }
+}
+```
+
+---
+
+### 8. Retry Worker Payout (Admin Only)
+
+**Endpoint**: `POST /api/payouts/workers/:workerId/retry`
+
+**Authentication**: Required (Bearer Token - Admin)
+
+**Headers**:
+```
+Authorization: Bearer {token}
+Content-Type: application/json
+```
+
+**Parameters**:
+- `workerId` (URL parameter): The ID of the worker
+
+**Request Body**:
+```json
+{
+  "jobId": "507f1f77bcf86cd799439011",
+  "amount": 1000
+}
+```
+
+**Response** (Success - 200):
+```json
+{
+  "status": "success",
+  "message": "Payout retry initiated successfully",
+  "data": {
+    "status": "success",
+    "transactionId": "txn123",
+    "amount": 1000,
+    "disbursementStatus": "success"
+  }
+}
+```
+
+---
+
 ## Webhook Handling (Backend will handle)
 
 The Backend automatically handles Paymob webhooks at: `POST /api/payments/webhook`
@@ -214,7 +460,7 @@ workerPayoutDetails: {
 10. Job proceeds with workers
     ↓
 11. When job is completed:
-    - Backend calls POST /api/payouts/jobs/:jobId/process
+    - Frontend calls POST /api/payouts/jobs/:jobId/process
     - Backend initiates payouts to all workers
     - Backend updates job.payment.status to "paid"
     ↓
@@ -272,7 +518,9 @@ Use these test numbers on Paymob's staging environment:
 2. Call `/api/payments/jobs/:jobId/initiate`
 3. Use test card/wallet number on Paymob page
 4. Verify payment status changes to `held`
-5. Verify job completion triggers payouts
+5. Register worker payout details
+6. Call `/api/payouts/jobs/:jobId/process`
+7. Verify payouts are initiated
 
 ---
 
@@ -293,36 +541,7 @@ Use these test numbers on Paymob's staging environment:
 - Paymob Payouts API: https://payouts.paymobsolutions.com/docs/
 - Backend Integration Design: See `Paymob_Integration_Design.md`
 - Paymob API Reference: See `PAYMOB_API_REFERENCE.md`
-
----
-
-## Additional Endpoints (For Future Reference)
-
-### Retry Worker Payout (Admin/System)
-
-**Endpoint**: `POST /api/payouts/workers/:workerId/retry`
-
-**Purpose**: Manually retry a failed payout for a worker
-
-**Request Body**:
-```json
-{
-  "jobId": "507f1f77bcf86cd799439011",
-  "amount": 1000
-}
-```
-
-**Response**:
-```json
-{
-  "status": "success",
-  "data": {
-    "transactionId": "abc123",
-    "amount": 1000,
-    "disbursementStatus": "success"
-  }
-}
-```
+- Implementation Summary: See `IMPLEMENTATION_SUMMARY.md`
 
 ---
 
@@ -335,8 +554,10 @@ Use these test numbers on Paymob's staging environment:
 5. **Error Recovery**: Implement proper error handling and user feedback
 6. **Accessibility**: Ensure payment forms are accessible to all users
 7. **Mobile Optimization**: Payment page should work well on mobile devices
+8. **Service Architecture**: All business logic is in services, routes only handle HTTP requests
 
 ---
 
 Last Updated: 2024
-Backend Integration Version: 1.0
+Backend Integration Version: 2.0
+Architecture: Service-based (Clean Architecture)
