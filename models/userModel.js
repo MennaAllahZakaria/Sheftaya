@@ -87,6 +87,41 @@ const userSchema = new mongoose.Schema(
       default: 0,
     },
 
+    /* ============ Payment & Payout Details ============ */
+    paymentPreferences: {
+      method: {
+        type: String,
+        enum: ["card", "wallet"],
+        default: "card",
+      },
+    },
+
+    workerPayoutDetails: {
+      method: {
+        type: String,
+        enum: ["mobile_wallet", "bank_card", "aman"],
+      },
+      // For mobile wallets
+      mobileWalletNumber: String, // e.g., 01020304050 (without +2)
+      walletIssuer: {
+        type: String,
+        enum: ["vodafone", "etisalat", "orange", "bank_wallet"],
+      },
+      // For bank accounts
+      bankCardNumber: String, // IBAN or card number
+      bankCode: String,
+      bankName: String,
+      bankTransactionType: {
+        type: String,
+        enum: ["salary", "credit_card", "prepaid_card", "cash_transfer"],
+        default: "salary",
+      },
+      fullName: String,
+      // For Aman
+      firstName: String,
+      lastName: String,
+    },
+
   },
   { timestamps: true }
 );
