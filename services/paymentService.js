@@ -1,4 +1,3 @@
-const asyncHandler = require("express-async-handler");
 const ApiError = require("../utils/apiError");
 const Job = require("../models/jobModel");
 const paymobService = require("./paymobService");
@@ -15,7 +14,7 @@ const User = require("../models/userModel");
  * @param {Object} user - User object (employer)
  * @returns {Promise<Object>} Payment link and order details
  */
-exports.initiateJobPayment = asyncHandler(async (jobId, user) => {
+exports.initiateJobPayment = async (jobId, user) => {
   /* ================= VALIDATION ================= */
 
   if (user.role !== "employer") {
@@ -128,7 +127,7 @@ exports.initiateJobPayment = asyncHandler(async (jobId, user) => {
     orderId: paymobOrder.id,
     paymentToken: paymentKeyResponse.token,
   };
-});
+};
 
 /* =====================================================
    HANDLE PAYMENT WEBHOOK
@@ -140,7 +139,7 @@ exports.initiateJobPayment = asyncHandler(async (jobId, user) => {
  * @param {string} signature - HMAC signature
  * @returns {Promise<Object>} Processing result
  */
-exports.handlePaymentWebhook = asyncHandler(async (webhookData, signature) => {
+exports.handlePaymentWebhook = async (webhookData, signature) => {
   /* ================= VERIFY SIGNATURE ================= */
 
   if (!paymobService.verifyWebhookSignature(webhookData, signature)) {
@@ -149,10 +148,11 @@ exports.handlePaymentWebhook = asyncHandler(async (webhookData, signature) => {
 
   /* ================= EXTRACT DATA ================= */
 
-  const orderId = webhookData.order?.id;
-  const transactionId = webhookData.transaction?.id;
-  const success = webhookData.success;
-  const amount = webhookData.order?.amount_cents / 100;
+  const transaction = webhookData.obj || webhookData.transaction || webhookData;
+  const orderId = transaction.order?.id || webhookData.order?.id;
+  const transactionId = transaction.id || webhookData.transaction?.id;
+  const success = transaction.success;
+  const amount = transaction.amount_cents / 100;
 
   if (!orderId || !transactionId) {
     throw new ApiError("Missing required webhook data", 400);
@@ -168,9 +168,17 @@ exports.handlePaymentWebhook = asyncHandler(async (webhookData, signature) => {
     throw new ApiError("Job not found for this payment", 404);
   }
 
+  if (job.payment.paymobTransactionId === String(transactionId)) {
+    return {
+      jobId: job._id,
+      success,
+      status: job.payment.status,
+    };
+  }
+
   if (success) {
     job.payment.status = "held";
-    job.payment.paymobTransactionId = transactionId;
+    job.payment.paymobTransactionId = String(transactionId);
     await job.save();
 
     /* ================= SEND NOTIFICATION ================= */
@@ -204,7 +212,7 @@ exports.handlePaymentWebhook = asyncHandler(async (webhookData, signature) => {
     success,
     status: job.payment.status,
   };
-});
+};
 
 /* =====================================================
    GET PAYMENT STATUS
@@ -215,11 +223,27 @@ exports.handlePaymentWebhook = asyncHandler(async (webhookData, signature) => {
  * @param {string} jobId - Job ID
  * @returns {Promise<Object>} Payment status details
  */
-exports.getPaymentStatus = asyncHandler(async (jobId) => {
-  const job = await Job.findById(jobId).select("payment title");
+exports.getPaymentStatus = async (jobId, user) => {
+  const job = await Job.findById(jobId).select("payment title employerId");
 
   if (!job) {
     throw new ApiError("Job not found", 404);
+  }
+
+  if (
+    user &&
+    user.role !== "admin" &&
+    job.employerId.toString() !== user._id.toString()
+  ) {
+    const Application = require("../models/applicationModel");
+    const isWorkerApplication = await Application.exists({
+      jobId,
+      workerId: user._id,
+    });
+
+    if (!isWorkerApplication) {
+      throw new ApiError("Unauthorized to view this payment", 403);
+    }
   }
 
   return {
@@ -229,7 +253,7 @@ exports.getPaymentStatus = asyncHandler(async (jobId) => {
     amount: job.payment?.totalAmount,
     escrowId: job.payment?.escrowId,
   };
-});
+};
 
 /* =====================================================
    INITIATE REFUND
@@ -241,7 +265,7 @@ exports.getPaymentStatus = asyncHandler(async (jobId) => {
  * @param {Object} user - User object (employer or admin)
  * @returns {Promise<Object>} Refund result
  */
-exports.initiateRefund = asyncHandler(async (jobId, user) => {
+exports.initiateRefund = async (jobId, user) => {
   /* ================= GET JOB ================= */
 
   const job = await Job.findById(jobId);
@@ -289,6 +313,7 @@ exports.initiateRefund = asyncHandler(async (jobId, user) => {
     );
 
     job.payment.status = "refunded";
+    job.payment.refundTransactionId = refundResponse.id || refundResponse.transaction_id;
     await job.save();
 
     /* ================= SEND NOTIFICATION ================= */
@@ -314,9 +339,9 @@ exports.initiateRefund = asyncHandler(async (jobId, user) => {
       jobId: job._id,
       status: "refunded",
       amount: job.payment.totalAmount,
-      transactionId: refundResponse.id,
+      transactionId: refundResponse.id || refundResponse.transaction_id,
     };
   } catch (error) {
     throw new ApiError("Failed to initiate refund", 500);
   }
-});
+};

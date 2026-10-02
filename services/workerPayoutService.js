@@ -1,26 +1,94 @@
-const asyncHandler = require("express-async-handler");
 const ApiError = require("../utils/apiError");
 const Job = require("../models/jobModel");
 const Application = require("../models/applicationModel");
 const User = require("../models/userModel");
 const paymobService = require("./paymobService");
-const payoutService = require("./payoutService");
 const { sendNotificationNow } = require("./notificationService");
 
-/* =====================================================
-   REGISTER WORKER PAYOUT DETAILS
-===================================================== */
+const SUCCESS_STATUSES = new Set(["success", "successful"]);
 
-/**
- * Register or update worker's payout details
- * @param {string} workerId - Worker ID
- * @param {Object} payoutDetails - Payout details
- * @returns {Promise<Object>} Updated payout details
- */
-exports.registerPayoutDetails = asyncHandler(async (workerId, payoutDetails) => {
-  const { method, mobileWalletNumber, walletIssuer, bankCardNumber, bankCode, bankName, bankTransactionType, fullName, firstName, lastName } = payoutDetails;
+const buildPayoutData = (worker, amount, clientReferenceId) => {
+  const details = worker.workerPayoutDetails;
+  const payoutData = {
+    amount,
+    method: details.method,
+    clientReferenceId,
+  };
 
-  /* ================= VALIDATION ================= */
+  if (details.method === "mobile_wallet") {
+    payoutData.issuer = details.walletIssuer;
+    payoutData.msisdn = details.mobileWalletNumber;
+  } else if (details.method === "bank_card") {
+    payoutData.bankCardNumber = details.bankCardNumber;
+    payoutData.bankCode = details.bankCode;
+    payoutData.bankTransactionType = details.bankTransactionType || "cash_transfer";
+    payoutData.fullName = details.fullName;
+  } else if (details.method === "aman") {
+    // Paymob Cashin uses the bank_card/instant_bank channels; Aman is not
+    // an issuer in the current Cashin API. Keep the legacy method accepted
+    // at the domain layer and fail safely until a supported issuer is mapped.
+    throw new ApiError("Aman payout is not supported by the current Paymob Cashin API", 400);
+  }
+
+  return payoutData;
+};
+
+const notifyWorker = (workerId, amount, jobId) => {
+  setImmediate(async () => {
+    try {
+      await sendNotificationNow({
+        userId: workerId,
+        type: "payout_initiated",
+        title: "تم بدء تحويل الراتب",
+        message: `تم بدء تحويل ${amount} جنيه لحسابك بنجاح`,
+        relatedJobId: jobId,
+      });
+    } catch (error) {
+      console.error("Payout notification error:", error.message);
+    }
+  });
+};
+
+const resultFromResponse = (workerId, amount, response) => {
+  const disbursementStatus = String(response.disbursement_status || "").toLowerCase();
+  const accepted = SUCCESS_STATUSES.has(disbursementStatus) || disbursementStatus === "pending";
+
+  if (!accepted) {
+    return {
+      workerId,
+      status: "failed",
+      transactionId: response.transaction_id,
+      amount,
+      reason: response.status_description || "Payout failed",
+      disbursementStatus,
+    };
+  }
+
+  return {
+    workerId,
+    status: "success",
+    transactionId: response.transaction_id,
+    amount,
+    disbursementStatus,
+  };
+};
+
+const findPayout = (job, applicationId) =>
+  job.payment.payouts?.find((payout) => payout.applicationId?.toString() === applicationId.toString());
+
+exports.registerPayoutDetails = async (workerId, payoutDetails) => {
+  const {
+    method,
+    mobileWalletNumber,
+    walletIssuer,
+    bankCardNumber,
+    bankCode,
+    bankName,
+    bankTransactionType,
+    fullName,
+    firstName,
+    lastName,
+  } = payoutDetails;
 
   if (!method || !["mobile_wallet", "bank_card", "aman"].includes(method)) {
     throw new ApiError("Invalid payout method", 400);
@@ -33,23 +101,18 @@ exports.registerPayoutDetails = asyncHandler(async (workerId, payoutDetails) => 
     if (!/^\d{11}$/.test(mobileWalletNumber)) {
       throw new ApiError("Mobile wallet number must be 11 digits", 400);
     }
-  } else if (method === "bank_card") {
-    if (!bankCardNumber || !bankCode || !fullName) {
-      throw new ApiError("Bank card number, code, and full name are required", 400);
-    }
-  } else if (method === "aman") {
-    if (!mobileWalletNumber || !firstName || !lastName) {
-      throw new ApiError("Mobile number, first name, and last name are required for Aman", 400);
-    }
   }
 
-  /* ================= UPDATE USER ================= */
+  if (method === "bank_card" && (!bankCardNumber || !bankCode || !fullName)) {
+    throw new ApiError("Bank card number, code, and full name are required", 400);
+  }
+
+  if (method === "aman" && (!mobileWalletNumber || !firstName || !lastName)) {
+    throw new ApiError("Mobile number, first name, and last name are required for Aman", 400);
+  }
 
   const user = await User.findById(workerId);
-
-  if (!user) {
-    throw new ApiError("User not found", 404);
-  }
+  if (!user) throw new ApiError("User not found", 404);
 
   user.workerPayoutDetails = {
     method,
@@ -65,331 +128,235 @@ exports.registerPayoutDetails = asyncHandler(async (workerId, payoutDetails) => 
   };
 
   await user.save();
+  return { workerId: user._id, payoutDetails: user.workerPayoutDetails };
+};
 
-  /* ================= RETURN RESPONSE ================= */
-
-  return {
-    workerId: user._id,
-    payoutDetails: user.workerPayoutDetails,
-  };
-});
-
-/* =====================================================
-   GET WORKER PAYOUT DETAILS
-===================================================== */
-
-/**
- * Get worker's payout details
- * @param {string} workerId - Worker ID
- * @returns {Promise<Object>} Payout details
- */
-exports.getPayoutDetails = asyncHandler(async (workerId) => {
+exports.getPayoutDetails = async (workerId) => {
   const user = await User.findById(workerId).select("workerPayoutDetails");
+  if (!user) throw new ApiError("User not found", 404);
 
-  if (!user) {
-    throw new ApiError("User not found", 404);
-  }
+  return { workerId: user._id, payoutDetails: user.workerPayoutDetails };
+};
 
-  return {
-    workerId: user._id,
-    payoutDetails: user.workerPayoutDetails,
-  };
-});
-
-/* =====================================================
-   PROCESS JOB PAYOUTS
-===================================================== */
-
-/**
- * Process payouts for a completed job
- * @param {string} jobId - Job ID
- * @param {Object} user - User object (employer or admin)
- * @returns {Promise<Object>} Payout results
- */
-exports.processJobPayouts = asyncHandler(async (jobId, user) => {
-  /* ================= GET JOB ================= */
-
+exports.processJobPayouts = async (jobId, user) => {
   const job = await Job.findById(jobId).select(
-    "title pricePerHour dailyWorkHours requiredWorkers payment employerId"
+    "title status pricePerHour dailyWorkHours requiredWorkers payment employerId"
   );
 
-  if (!job) {
-    throw new ApiError("Job not found", 404);
-  }
-
-  /* ================= AUTHORIZATION ================= */
-
+  if (!job) throw new ApiError("Job not found", 404);
   if (user.role !== "admin" && user._id.toString() !== job.employerId.toString()) {
     throw new ApiError("Unauthorized to process payouts for this job", 403);
   }
-
-  /* ================= CHECK PAYMENT STATUS ================= */
-
-  if (job.payment?.status !== "held") {
-    throw new ApiError(
-      `Cannot process payouts. Payment status is ${job.payment?.status}`,
-      400
-    );
+  if (job.status !== "completed") {
+    throw new ApiError("Payouts can only be processed after job completion", 400);
   }
-
-  /* ================= GET ACCEPTED WORKERS ================= */
+  if (job.payment?.status !== "held") {
+    throw new ApiError(`Cannot process payouts. Payment status is ${job.payment?.status}`, 400);
+  }
+  if (job.payment.payoutStatus === "completed" || job.payment?.status === "paid") {
+    throw new ApiError("Payouts have already been completed", 400);
+  }
 
   const applications = await Application.find({
     jobId,
     status: "accepted",
+    shiftStatus: "completed",
   })
-    .select("workerId")
-    .populate("workerId", "workerPayoutDetails email firstName lastName")
+    .select("_id workerId")
+    .populate("workerId", "workerPayoutDetails email firstName lastName fcmToken")
     .lean();
 
   if (applications.length === 0) {
-    throw new ApiError("No accepted workers found for this job", 400);
+    throw new ApiError("No completed workers found for this job", 400);
   }
 
-  /* ================= CALCULATE WORKER SHARE ================= */
-
-  const workerShare =
-    (job.pricePerHour.amount * job.dailyWorkHours) / applications.length;
-
-  /* ================= AUTHENTICATE WITH PAYOUTS API ================= */
-
-  let payoutsAccessToken;
-  try {
-    payoutsAccessToken = await paymobService.authenticatePayouts();
-  } catch (error) {
-    throw new ApiError("Failed to authenticate with payment provider", 500);
-  }
-
-  /* ================= PROCESS PAYOUTS FOR EACH WORKER ================= */
-
-  const payoutResults = [];
+  const workerShare = Number((job.pricePerHour.amount * job.dailyWorkHours).toFixed(2));
+  const pendingResults = [];
+  const existingSuccessful = [];
+  const existingPending = [];
 
   for (const application of applications) {
-    const worker = application.workerId;
-
-    try {
-      // Validate worker payout details
-      if (!worker.workerPayoutDetails?.method) {
-        console.warn(`Worker ${worker._id} has no payout method configured`);
-        payoutResults.push({
-          workerId: worker._id,
-          status: "failed",
-          reason: "No payout method configured",
-        });
-        continue;
-      }
-
-      /* ================= BUILD PAYOUT REQUEST ================= */
-
-      const payoutData = {
-        amount: workerShare,
-        method: worker.workerPayoutDetails.method,
-        clientReferenceId: paymobService.generateClientReferenceId(
-          worker._id,
-          jobId
-        ),
-      };
-
-      if (worker.workerPayoutDetails.method === "mobile_wallet") {
-        payoutData.issuer = worker.workerPayoutDetails.walletIssuer || "vodafone";
-        payoutData.msisdn = worker.workerPayoutDetails.mobileWalletNumber;
-      } else if (worker.workerPayoutDetails.method === "bank_card") {
-        payoutData.bankCardNumber = worker.workerPayoutDetails.bankCardNumber;
-        payoutData.bankCode = worker.workerPayoutDetails.bankCode;
-        payoutData.bankTransactionType =
-          worker.workerPayoutDetails.bankTransactionType || "salary";
-        payoutData.fullName = worker.workerPayoutDetails.fullName;
-      } else if (worker.workerPayoutDetails.method === "aman") {
-        payoutData.msisdn = worker.workerPayoutDetails.mobileWalletNumber;
-        payoutData.firstName = worker.workerPayoutDetails.firstName;
-        payoutData.lastName = worker.workerPayoutDetails.lastName;
-        payoutData.email = worker.email;
-      }
-
-      /* ================= INITIATE PAYOUT ================= */
-
-      const payoutResponse = await paymobService.initiatePayout(
-        payoutData,
-        payoutsAccessToken
-      );
-
-      /* ================= HANDLE PAYOUT RESPONSE ================= */
-
-      if (
-        payoutResponse.disbursement_status === "success" ||
-        payoutResponse.disbursement_status === "successful" ||
-        payoutResponse.disbursement_status === "pending"
-      ) {
-        payoutResults.push({
-          workerId: worker._id,
-          status: "success",
-          transactionId: payoutResponse.transaction_id,
-          amount: workerShare,
-          disbursementStatus: payoutResponse.disbursement_status,
-        });
-
-        /* ================= SEND NOTIFICATION ================= */
-
-        setImmediate(async () => {
-          try {
-            if (worker.fcmToken) {
-              await sendNotificationNow({
-                userId: worker._id,
-                type: "payout_initiated",
-                title: "تم بدء تحويل الراتب",
-                message: `تم بدء تحويل ${workerShare} جنيه لحسابك بنجاح`,
-                relatedJobId: jobId,
-              });
-            }
-          } catch (err) {
-            console.error("Notification error:", err.message);
-          }
-        });
-      } else {
-        payoutResults.push({
-          workerId: worker._id,
-          status: "failed",
-          reason: payoutResponse.status_description || "Unknown error",
-        });
-      }
-    } catch (error) {
-      console.error(`Payout failed for worker ${worker._id}:`, error.message);
-      payoutResults.push({
-        workerId: worker._id,
-        status: "failed",
-        reason: error.message,
+    const previous = findPayout(job, application._id);
+    if (previous?.status === "success") {
+      existingSuccessful.push({
+        workerId: application.workerId._id,
+        status: "success",
+        transactionId: previous.transactionId,
+        amount: previous.amount,
+        disbursementStatus: previous.disbursementStatus,
       });
+    } else if (previous?.status === "pending") {
+      existingPending.push({
+        workerId: application.workerId._id,
+        status: "success",
+        transactionId: previous.transactionId,
+        amount: previous.amount,
+        disbursementStatus: previous.disbursementStatus || "pending",
+      });
+    } else {
+      pendingResults.push({ application, previous });
     }
   }
 
-  /* ================= UPDATE JOB PAYMENT STATUS ================= */
+  let payoutsAccessToken;
+  if (pendingResults.length > 0) {
+    try {
+      payoutsAccessToken = await paymobService.authenticatePayouts();
+    } catch (error) {
+      throw new ApiError("Failed to authenticate with payment provider", 500);
+    }
+  }
 
-  const successfulPayouts = payoutResults.filter((r) => r.status === "success");
-  const failedPayouts = payoutResults.filter((r) => r.status === "failed");
+  const payoutResults = [...existingSuccessful, ...existingPending];
 
-  if (successfulPayouts.length === applications.length) {
+  for (const { application, previous } of pendingResults) {
+    const worker = application.workerId;
+    const clientReferenceId = previous?.clientReferenceId ||
+      paymobService.generateClientReferenceId(worker._id, jobId);
+    let result;
+
+    try {
+      if (!worker.workerPayoutDetails?.method) {
+        result = {
+          workerId: worker._id,
+          status: "failed",
+          amount: workerShare,
+          reason: "No payout method configured",
+        };
+      } else {
+        const payoutResponse = await paymobService.initiatePayout(
+          buildPayoutData(worker, workerShare, clientReferenceId),
+          payoutsAccessToken
+        );
+        result = resultFromResponse(worker._id, workerShare, payoutResponse);
+      }
+    } catch (error) {
+      result = {
+        workerId: worker._id,
+        status: "failed",
+        amount: workerShare,
+        reason: error.message,
+      };
+    }
+
+    payoutResults.push(result);
+    job.payment.payouts = job.payment.payouts || [];
+    job.payment.payouts.push({
+      applicationId: application._id,
+      workerId: worker._id,
+      amount: workerShare,
+      clientReferenceId,
+      transactionId: result.transactionId,
+      status: result.disbursementStatus === "pending" ? "pending" : result.status,
+      disbursementStatus: result.disbursementStatus,
+      reason: result.reason,
+      processedAt: new Date(),
+    });
+
+    if (result.status === "success") notifyWorker(worker._id, workerShare, jobId);
+  }
+
+  const finalizedCount = payoutResults.filter(
+    (result) => result.status === "success" && SUCCESS_STATUSES.has(result.disbursementStatus)
+  ).length;
+  const initiatedCount = payoutResults.filter((result) => result.status === "success").length;
+  const failedCount = payoutResults.filter((result) => result.status === "failed").length;
+
+  if (finalizedCount === applications.length) {
     job.payment.status = "paid";
-  } else if (successfulPayouts.length > 0) {
-    job.payment.status = "paid";
-    console.warn(
-      `Partial payout success for job ${jobId}: ${successfulPayouts.length}/${applications.length} successful`
-    );
+    job.payment.payoutStatus = "completed";
+  } else if (initiatedCount > 0) {
+    job.payment.payoutStatus = failedCount > 0 ? "partial" : "processing";
+    // Keep funds held until every provider payout is final and successful.
   } else {
-    throw new ApiError("All payouts failed. Please retry.", 500);
+    job.payment.payoutStatus = "partial";
   }
 
   await job.save();
 
-  /* ================= RETURN RESPONSE ================= */
+  if (initiatedCount === 0) {
+    throw new ApiError("All payouts failed. Please retry.", 500);
+  }
 
   return {
     jobId,
     totalWorkers: applications.length,
-    successful: successfulPayouts.length,
-    failed: failedPayouts.length,
+    successful: initiatedCount,
+    failed: failedCount,
     results: payoutResults,
   };
-});
+};
 
-/* =====================================================
-   RETRY WORKER PAYOUT
-===================================================== */
-
-/**
- * Retry a failed payout for a specific worker
- * @param {string} workerId - Worker ID
- * @param {string} jobId - Job ID
- * @param {number} amount - Amount to payout
- * @returns {Promise<Object>} Payout result
- */
-exports.retryWorkerPayout = asyncHandler(async (workerId, jobId, amount) => {
-  /* ================= GET WORKER ================= */
-
-  const worker = await User.findById(workerId).select(
-    "workerPayoutDetails email firstName lastName"
+exports.retryWorkerPayout = async (workerId, jobId, user) => {
+  const job = await Job.findById(jobId).select(
+    "status payment employerId pricePerHour dailyWorkHours payouts"
   );
-
-  if (!worker || !worker.workerPayoutDetails?.method) {
-    throw new ApiError("Worker or payout details not found", 404);
+  if (!job) throw new ApiError("Job not found", 404);
+  if (user.role !== "admin" && user._id.toString() !== job.employerId.toString()) {
+    throw new ApiError("Unauthorized to retry this payout", 403);
+  }
+  if (job.status !== "completed" || job.payment?.status !== "held") {
+    throw new ApiError("Payout can only be retried for a completed job with held funds", 400);
   }
 
-  /* ================= AUTHENTICATE WITH PAYOUTS API ================= */
+  const application = await Application.findOne({
+    jobId,
+    workerId,
+    status: "accepted",
+    shiftStatus: "completed",
+  }).select("_id workerId").populate("workerId", "workerPayoutDetails email firstName lastName");
+  if (!application) throw new ApiError("Completed worker application not found", 404);
 
-  let payoutsAccessToken;
-  try {
-    payoutsAccessToken = await paymobService.authenticatePayouts();
-  } catch (error) {
-    throw new ApiError("Failed to authenticate with payment provider", 500);
+  const previous = findPayout(job, application._id);
+  if (previous?.status === "success" || previous?.status === "pending") {
+    throw new ApiError("This payout is already initiated", 400);
   }
 
-  /* ================= BUILD PAYOUT REQUEST ================= */
+  const amount = Number((job.pricePerHour.amount * job.dailyWorkHours).toFixed(2));
+  const token = await paymobService.authenticatePayouts();
+  const clientReferenceId = paymobService.generateClientReferenceId(workerId, jobId);
+  const response = await paymobService.initiatePayout(
+    buildPayoutData(application.workerId, amount, clientReferenceId),
+    token
+  );
+  const result = resultFromResponse(workerId, amount, response);
 
-  const payoutData = {
+  job.payment.payouts = job.payment.payouts || [];
+  job.payment.payouts.push({
+    applicationId: application._id,
+    workerId,
     amount,
-    method: worker.workerPayoutDetails.method,
-    clientReferenceId: paymobService.generateClientReferenceId(workerId, jobId),
+    clientReferenceId,
+    transactionId: result.transactionId,
+    status: result.disbursementStatus === "pending" ? "pending" : result.status,
+    disbursementStatus: result.disbursementStatus,
+    reason: result.reason,
+    processedAt: new Date(),
+  });
+  await job.save();
+
+  if (result.status === "failed") throw new ApiError(result.reason, 400);
+  return {
+    status: "success",
+    transactionId: result.transactionId,
+    amount,
+    disbursementStatus: result.disbursementStatus,
   };
+};
 
-  if (worker.workerPayoutDetails.method === "mobile_wallet") {
-    payoutData.issuer = worker.workerPayoutDetails.walletIssuer || "vodafone";
-    payoutData.msisdn = worker.workerPayoutDetails.mobileWalletNumber;
-  } else if (worker.workerPayoutDetails.method === "bank_card") {
-    payoutData.bankCardNumber = worker.workerPayoutDetails.bankCardNumber;
-    payoutData.bankCode = worker.workerPayoutDetails.bankCode;
-    payoutData.bankTransactionType =
-      worker.workerPayoutDetails.bankTransactionType || "salary";
-    payoutData.fullName = worker.workerPayoutDetails.fullName;
-  } else if (worker.workerPayoutDetails.method === "aman") {
-    payoutData.msisdn = worker.workerPayoutDetails.mobileWalletNumber;
-    payoutData.firstName = worker.workerPayoutDetails.firstName;
-    payoutData.lastName = worker.workerPayoutDetails.lastName;
-    payoutData.email = worker.email;
-  }
-
-  /* ================= INITIATE PAYOUT ================= */
-
-  const payoutResponse = await paymobService.initiatePayout(
-    payoutData,
-    payoutsAccessToken
+exports.getPayoutStatus = async (jobId, user) => {
+  const job = await Job.findById(jobId).select(
+    "title payment status confirmation requiredWorkers employerId"
   );
-
-  /* ================= HANDLE RESPONSE ================= */
+  if (!job) throw new ApiError("Job not found", 404);
 
   if (
-    payoutResponse.disbursement_status === "success" ||
-    payoutResponse.disbursement_status === "successful" ||
-    payoutResponse.disbursement_status === "pending"
+    user &&
+    user.role !== "admin" &&
+    job.employerId.toString() !== user._id.toString()
   ) {
-    return {
-      status: "success",
-      transactionId: payoutResponse.transaction_id,
-      amount,
-      disbursementStatus: payoutResponse.disbursement_status,
-    };
-  } else {
-    throw new ApiError(
-      payoutResponse.status_description || "Payout failed",
-      400
-    );
-  }
-});
-
-/* =====================================================
-   GET PAYOUT STATUS
-===================================================== */
-
-/**
- * Get payout status for a job
- * @param {string} jobId - Job ID
- * @returns {Promise<Object>} Payout status details
- */
-exports.getPayoutStatus = asyncHandler(async (jobId) => {
-  const job = await Job.findById(jobId).select(
-    "title payment status confirmation requiredWorkers"
-  );
-
-  if (!job) {
-    throw new ApiError("Job not found", 404);
+    const isWorker = await Application.exists({ jobId, workerId: user._id });
+    if (!isWorker) throw new ApiError("Unauthorized to view this payout", 403);
   }
 
   return {
@@ -400,5 +367,66 @@ exports.getPayoutStatus = asyncHandler(async (jobId) => {
     amount: job.payment?.totalAmount,
     isCompleted: job.confirmation?.employerConfirmed,
     requiredWorkers: job.requiredWorkers,
+    payoutStatus: job.payment.payoutStatus,
   };
-});
+};
+
+exports.handlePayoutWebhook = async (payload, callbackSecret) => {
+  if (
+    process.env.PAYMOB_PAYOUT_CALLBACK_SECRET &&
+    callbackSecret !== process.env.PAYMOB_PAYOUT_CALLBACK_SECRET
+  ) {
+    throw new ApiError("Invalid payout callback secret", 401);
+  }
+
+  const transactionId = payload.transaction_id || payload.id;
+  const status = String(
+    payload.disbursement_status || payload.status || ""
+  ).toLowerCase();
+
+  if (!transactionId || !status) {
+    throw new ApiError("Missing payout callback data", 400);
+  }
+
+  const job = await Job.findOne({ "payment.payouts.transactionId": transactionId });
+  if (!job) throw new ApiError("Payout transaction not found", 404);
+
+  const payout = job.payment.payouts.find(
+    (item) => item.transactionId === transactionId
+  );
+  if (!payout) throw new ApiError("Payout transaction not found", 404);
+
+  const isSuccess = SUCCESS_STATUSES.has(status);
+  payout.status = isSuccess ? "success" : status === "pending" ? "pending" : "failed";
+  payout.disbursementStatus = status;
+  payout.reason = payload.status_description || payout.reason;
+  payout.processedAt = new Date();
+
+  const latestByApplication = new Map();
+  for (const item of job.payment.payouts) {
+    latestByApplication.set(item.applicationId.toString(), item);
+  }
+  const latestPayouts = [...latestByApplication.values()];
+  const allSuccessful = latestPayouts.length > 0 &&
+    latestPayouts.every((item) => item.status === "success");
+  const hasPending = latestPayouts.some((item) => item.status === "pending");
+
+  if (allSuccessful) {
+    job.payment.status = "paid";
+    job.payment.payoutStatus = "completed";
+  } else if (hasPending) {
+    job.payment.payoutStatus = "processing";
+  } else {
+    job.payment.payoutStatus = "partial";
+  }
+
+  await job.save();
+
+  return {
+    jobId: job._id,
+    transactionId,
+    status,
+    paymentStatus: job.payment.status,
+    payoutStatus: job.payment.payoutStatus,
+  };
+};

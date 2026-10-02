@@ -1,5 +1,5 @@
 const express = require("express");
-const authMiddleware = require("../middleware/authMiddleware");
+const { protect, allowedTo } = require("../middleware/authMiddleware");
 const paymentService = require("../services/paymentService");
 
 const router = express.Router();
@@ -10,11 +10,14 @@ const router = express.Router();
  */
 router.post(
   "/jobs/:jobId/initiate",
-  authMiddleware,
+  protect,
+  allowedTo("employer"),
   async (req, res, next) => {
     try {
-      const { jobId } = req.params;
-      const result = await paymentService.initiateJobPayment(jobId, req.user);
+      const result = await paymentService.initiateJobPayment(
+        req.params.jobId,
+        req.user
+      );
 
       res.status(200).json({
         status: "success",
@@ -31,31 +34,31 @@ router.post(
  * POST /payments/webhook
  * Receive payment notifications from Paymob
  */
-router.post(
-  "/webhook",
-  async (req, res, next) => {
-    try {
-      const webhookData = req.body;
-      const signature = req.headers["hmac-signature"] || req.query.hmac;
+router.post("/webhook", async (req, res, next) => {
+  try {
+    const signature =
+      req.headers["hmac-signature"] ||
+      req.headers["x-paymob-hmac"] ||
+      req.query.hmac ||
+      req.body?.hmac;
 
-      const result = await paymentService.handlePaymentWebhook(
-        webhookData,
-        signature
-      );
+    const result = await paymentService.handlePaymentWebhook(
+      req.body,
+      signature
+    );
 
-      res.status(200).json({
-        status: "success",
-        message: "Webhook processed successfully",
-        data: result,
-      });
-    } catch (error) {
-      res.status(error.statusCode || 500).json({
-        status: "fail",
-        message: error.message,
-      });
-    }
+    res.status(200).json({
+      status: "success",
+      message: "Webhook processed successfully",
+      data: result,
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      status: "fail",
+      message: error.message,
+    });
   }
-);
+});
 
 /**
  * GET /payments/jobs/:jobId/status
@@ -63,11 +66,14 @@ router.post(
  */
 router.get(
   "/jobs/:jobId/status",
-  authMiddleware,
+  protect,
+  allowedTo("employer", "worker", "admin"),
   async (req, res, next) => {
     try {
-      const { jobId } = req.params;
-      const result = await paymentService.getPaymentStatus(jobId);
+      const result = await paymentService.getPaymentStatus(
+        req.params.jobId,
+        req.user
+      );
 
       res.status(200).json({
         status: "success",
@@ -85,11 +91,14 @@ router.get(
  */
 router.post(
   "/jobs/:jobId/refund",
-  authMiddleware,
+  protect,
+  allowedTo("employer", "admin"),
   async (req, res, next) => {
     try {
-      const { jobId } = req.params;
-      const result = await paymentService.initiateRefund(jobId, req.user);
+      const result = await paymentService.initiateRefund(
+        req.params.jobId,
+        req.user
+      );
 
       res.status(200).json({
         status: "success",

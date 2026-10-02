@@ -1,5 +1,6 @@
 const asyncHandler = require("express-async-handler");
 const Application = require("../models/applicationModel");
+const Job = require("../models/jobModel");
 const ApiError = require("../utils/apiError");
 const { getIO } = require("../config/socket");
 
@@ -24,7 +25,7 @@ const assertState = (current, allowed, msg) => {
 
 exports.onTheWay = asyncHandler(async (req, res) => {
   const app = await Application.findById(req.params.id)
-    .populate("jobId", "status employerId");
+    .populate("jobId", "status employerId payment");
 
   if (!app) throw new ApiError("Application not found", 404);
 
@@ -36,8 +37,12 @@ exports.onTheWay = asyncHandler(async (req, res) => {
     throw new ApiError("Application not accepted", 400);
   }
 
-  if (!app.jobId || app.jobId.status !== "active") {
+  if (!app.jobId || !["active", "filled", "in_progress"].includes(app.jobId.status)) {
     throw new ApiError("Job is not active", 400);
+  }
+
+  if (app.jobId.payment?.status !== "held") {
+    throw new ApiError("Employer payment is not held", 400);
   }
 
   assertState(app.shiftStatus, ["not_started", "completed"], "Invalid state");
@@ -46,6 +51,10 @@ exports.onTheWay = asyncHandler(async (req, res) => {
   app.onTheWayAt = new Date();
 
   await app.save();
+
+  if (app.jobId.status === "filled") {
+    await Job.findByIdAndUpdate(app.jobId._id, { status: "in_progress" });
+  }
 
   emitToJob(app.jobId._id, "worker_on_the_way", {
     appId: app._id,
@@ -72,7 +81,7 @@ exports.onTheWay = asyncHandler(async (req, res) => {
 
 exports.arrive = asyncHandler(async (req, res) => {
   const app = await Application.findById(req.params.id)
-    .populate("jobId", "status employerId");
+    .populate("jobId", "status employerId payment");
 
   if (!app) throw new ApiError("Application not found", 404);
 
@@ -84,8 +93,12 @@ exports.arrive = asyncHandler(async (req, res) => {
     throw new ApiError("Application not accepted", 400);
   }
 
-  if (!app.jobId || app.jobId.status !== "active") {
+  if (!app.jobId || !["active", "filled", "in_progress"].includes(app.jobId.status)) {
     throw new ApiError("Job is not active", 400);
+  }
+
+  if (app.jobId.payment?.status !== "held") {
+    throw new ApiError("Employer payment is not held", 400);
   }
 
   // If it's the second day or later, we might need to reset the status 
@@ -171,12 +184,16 @@ exports.approveArrival = asyncHandler(async (req, res) => {
 
 exports.startShift = asyncHandler(async (req, res) => {
   const app = await Application.findById(req.params.id)
-    .populate("jobId", "employerId");
+    .populate("jobId", "employerId status payment");
 
   if (!app) throw new ApiError("Application not found", 404);
 
   if (!app.jobId.employerId.equals(req.user._id)) {
     throw new ApiError("Unauthorized", 403);
+  }
+
+  if (app.jobId.payment?.status !== "held") {
+    throw new ApiError("Employer payment is not held", 400);
   }
 
   // For multi-day jobs, we allow starting again if the previous state was completed/arrived_approved
@@ -215,12 +232,16 @@ exports.startShift = asyncHandler(async (req, res) => {
 
 exports.endShift = asyncHandler(async (req, res) => {
   const app = await Application.findById(req.params.id)
-    .populate("jobId", "employerId");
+    .populate("jobId", "employerId payment");
 
   if (!app) throw new ApiError("Application not found", 404);
 
   if (!app.jobId.employerId.equals(req.user._id)) {
     throw new ApiError("Unauthorized", 403);
+  }
+
+  if (app.jobId.payment?.status !== "held") {
+    throw new ApiError("Employer payment is not held", 400);
   }
 
   assertState(app.shiftStatus, ["in_progress"], "Shift not started");

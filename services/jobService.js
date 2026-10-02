@@ -15,6 +15,8 @@ const {
 } = require("../services/notificationService");
 
 const sendEmail = require("../utils/sendEmail");
+const paymentService = require("./paymentService");
+const workerPayoutService = require("./workerPayoutService");
 /* =====================================================
    CREATE JOB (Draft)
 ===================================================== */
@@ -670,13 +672,6 @@ exports.cancelJob = asyncHandler(async (req, res) => {
       throw new ApiError("Job not found or unauthorized", 404);
     }
 
-    /* ================= PAYMENT HANDLING ================= */
-
-    if (job.payment?.status === "held") {
-      job.payment.status = "refunded";
-      await job.save({ session });
-    }
-
     /* ================= PENALTY ================= */
 
     const isLateCancel =
@@ -702,6 +697,14 @@ exports.cancelJob = asyncHandler(async (req, res) => {
 
     await session.commitTransaction();
     session.endSession();
+
+    if (job.payment?.status === "held") {
+      try {
+        await paymentService.initiateRefund(job._id, req.user);
+      } catch (refundError) {
+        console.error("Payment refund failed after job cancellation:", refundError.message);
+      }
+    }
 
     /* ================= NOTIFICATIONS (OUTSIDE TX) ================= */
 
@@ -835,16 +838,25 @@ exports.confirmCompletion = asyncHandler(async (req, res) => {
         updatedJob.requiredWorkers
     ) {
       updatedJob.status = "completed";
-
-      if (updatedJob.payment?.status !== "paid") {
-        updatedJob.payment.status = "paid";
-      }
     }
 
     await updatedJob.save({ session });
 
     await session.commitTransaction();
     session.endSession();
+
+    if (updatedJob.status === "completed" && updatedJob.payment?.status === "held") {
+      setImmediate(async () => {
+        try {
+          await workerPayoutService.processJobPayouts(updatedJob._id, {
+            _id: updatedJob.employerId,
+            role: "employer",
+          });
+        } catch (payoutError) {
+          console.error("Automatic job payout failed:", payoutError.message);
+        }
+      });
+    }
 
     /* ================= RESPONSE ================= */
 

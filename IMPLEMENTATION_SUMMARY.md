@@ -30,6 +30,7 @@ This document summarizes the complete Paymob payment integration implemented for
    - Job payout processing endpoint
    - Payout retry functionality
    - Payout status checking
+   - Paymob disbursement callback for asynchronous bank transactions
 
 5. **Documentation Files**
    - `Paymob_Integration_Design.md` - Complete design document
@@ -121,6 +122,7 @@ When job.status changes to "cancelled" and payment.status is "held":
 | POST | `/api/payouts/jobs/:jobId/process` | Process job payouts | Required (Admin/Employer) |
 | POST | `/api/payouts/workers/:workerId/retry` | Retry failed payout | Required (Admin) |
 | GET | `/api/payouts/jobs/:jobId/status` | Check payout status | Required |
+| POST | `/api/payouts/webhook` | Process Paymob disbursement callback | Paymob |
 
 ## Environment Variables Required
 
@@ -134,6 +136,7 @@ PAYMOB_CARD_INTEGRATION_ID=
 PAYMOB_IFRAME_ID=
 PAYMOB_HMAC_SECRET=
 PAYMOB_API_URL=https://accept.paymob.com/api
+PAYMOB_PAYOUT_CALLBACK_SECRET=
 ```
 
 ## Data Models
@@ -187,11 +190,11 @@ payment: {
 ### 2. Multiple Payout Methods
 - Mobile wallets (Vodafone, Etisalat, Orange)
 - Bank transfers
-- Aman cash pickup
+- Aman details can be stored, but the current Paymob Cashin API does not expose an Aman issuer; payout is rejected safely until a supported Paymob channel is configured.
 - Flexible for worker preferences
 
 ### 3. Webhook Security
-- HMAC-SHA256 signature verification
+- HMAC-SHA512 signature verification using Paymob's documented transaction field order
 - Prevents spoofed webhooks
 - Ensures payment authenticity
 
@@ -307,6 +310,8 @@ payment: {
 - Verify webhook URL is publicly accessible
 - Check HMAC_SECRET is correct
 - Review Paymob webhook logs
+
+For asynchronous bank disbursements, configure Paymob's disbursement callback to `/api/payouts/webhook`.
 
 **3. Payout Fails**
 - Verify worker has payout details configured

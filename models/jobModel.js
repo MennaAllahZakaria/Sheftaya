@@ -152,6 +152,38 @@ const jobSchema = new mongoose.Schema(
       },
 
       escrowId: String,
+
+      paymobOrderId: String,
+      paymobTransactionId: String,
+      refundTransactionId: String,
+      paymentLink: String,
+      payoutStatus: {
+        type: String,
+        enum: ["not_started", "processing", "partial", "completed"],
+        default: "not_started",
+      },
+      payouts: [
+        {
+          applicationId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Application",
+          },
+          workerId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+          },
+          amount: Number,
+          clientReferenceId: String,
+          transactionId: String,
+          status: {
+            type: String,
+            enum: ["pending", "success", "failed"],
+          },
+          disbursementStatus: String,
+          reason: String,
+          processedAt: Date,
+        },
+      ],
     },
 
     /* ============ Confirmation Flow ============ */

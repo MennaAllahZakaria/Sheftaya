@@ -1,12 +1,12 @@
 const axios = require("axios");
 const crypto = require("crypto");
-const asyncHandler = require("express-async-handler");
 const ApiError = require("../utils/apiError");
 
 // ==================== CONFIGURATION ====================
 
 const PAYMOB_API_URL = process.env.PAYMOB_API_URL || "https://accept.paymob.com/api";
-const PAYMOB_PAYOUTS_URL = "https://payouts.paymobsolutions.com/api";
+const PAYMOB_PAYOUTS_URL =
+  process.env.PAYMOB_PAYOUTS_URL || "https://payouts.paymobsolutions.com/api";
 
 const PAYMOB_API_KEY = process.env.PAYMOB_API_KEY;
 const PAYMOB_SECRET_KEY = process.env.PAYMOB_SECRET_KEY;
@@ -21,7 +21,7 @@ const PAYMOB_CARD_INTEGRATION_ID = process.env.PAYMOB_CARD_INTEGRATION_ID;
  * Authenticate with Paymob to get an auth token
  * @returns {Promise<string>} Auth token
  */
-exports.authenticate = asyncHandler(async () => {
+exports.authenticate = async () => {
   try {
     const response = await axios.post(
       `${PAYMOB_API_URL}/auth/tokens`,
@@ -45,7 +45,7 @@ exports.authenticate = asyncHandler(async () => {
     console.error("Paymob authentication error:", error.response?.data || error.message);
     throw new ApiError("Paymob authentication failed", 500);
   }
-});
+};
 
 // ==================== ORDER MANAGEMENT ====================
 
@@ -55,7 +55,7 @@ exports.authenticate = asyncHandler(async () => {
  * @param {string} authToken - Paymob auth token
  * @returns {Promise<Object>} Order details from Paymob
  */
-exports.registerOrder = asyncHandler(async (orderData, authToken) => {
+exports.registerOrder = async (orderData, authToken) => {
   try {
     const response = await axios.post(
       `${PAYMOB_API_URL}/ecommerce/orders`,
@@ -90,7 +90,7 @@ exports.registerOrder = asyncHandler(async (orderData, authToken) => {
     console.error("Paymob order registration error:", error.response?.data || error.message);
     throw new ApiError("Failed to register order with Paymob", 500);
   }
-});
+};
 
 // ==================== PAYMENT KEY ====================
 
@@ -100,7 +100,7 @@ exports.registerOrder = asyncHandler(async (orderData, authToken) => {
  * @param {string} authToken - Paymob auth token
  * @returns {Promise<Object>} Payment key response from Paymob
  */
-exports.requestPaymentKey = asyncHandler(async (paymentData, authToken) => {
+exports.requestPaymentKey = async (paymentData, authToken) => {
   try {
     const integrationId =
       paymentData.method === "wallet"
@@ -147,7 +147,7 @@ exports.requestPaymentKey = asyncHandler(async (paymentData, authToken) => {
     console.error("Paymob payment key error:", error.response?.data || error.message);
     throw new ApiError("Failed to request payment key from Paymob", 500);
   }
-});
+};
 
 // ==================== WEBHOOK VERIFICATION ====================
 
@@ -159,17 +159,50 @@ exports.requestPaymentKey = asyncHandler(async (paymentData, authToken) => {
  */
 exports.verifyWebhookSignature = (webhookData, signature) => {
   try {
-    // Construct the message to be verified
-    // Paymob uses: order_id + transaction_id + success + amount_cents + secret_key
-    const message = `${webhookData.order.id}${webhookData.transaction.id}${webhookData.success}${webhookData.order.amount_cents}${PAYMOB_HMAC_SECRET}`;
+    if (!PAYMOB_HMAC_SECRET || !signature) return false;
 
-    // Generate HMAC SHA256 signature
+    const transaction = webhookData?.obj || webhookData?.transaction || webhookData;
+    const values = [
+      transaction.amount_cents,
+      transaction.created_at,
+      transaction.currency,
+      transaction.error_occured,
+      transaction.has_parent_transaction,
+      transaction.id,
+      transaction.integration_id,
+      transaction.is_3d_secure,
+      transaction.is_auth,
+      transaction.is_capture,
+      transaction.is_refunded,
+      transaction.is_standalone_payment,
+      transaction.is_voided,
+      transaction.order?.id || webhookData?.order?.id,
+      transaction.owner,
+      transaction.pending,
+      transaction.source_data?.pan,
+      transaction.source_data?.sub_type,
+      transaction.source_data?.type,
+      transaction.success,
+    ];
+
+    if (values.some((value) => value === undefined || value === null)) {
+      return false;
+    }
+
+    const message = values.map(String).join("");
     const expectedSignature = crypto
-      .createHmac("sha256", PAYMOB_HMAC_SECRET)
+      .createHmac("sha512", PAYMOB_HMAC_SECRET)
       .update(message)
       .digest("hex");
 
-    return expectedSignature === signature;
+    const received = String(signature).toLowerCase();
+    return (
+      received.length === expectedSignature.length &&
+      crypto.timingSafeEqual(
+        Buffer.from(expectedSignature),
+        Buffer.from(received)
+      )
+    );
   } catch (error) {
     console.error("Webhook signature verification error:", error.message);
     return false;
@@ -184,7 +217,7 @@ exports.verifyWebhookSignature = (webhookData, signature) => {
  * @param {string} authToken - Paymob auth token
  * @returns {Promise<Object>} Refund response from Paymob
  */
-exports.initiateRefund = asyncHandler(async (refundData, authToken) => {
+exports.initiateRefund = async (refundData, authToken) => {
   try {
     const response = await axios.post(
       `${PAYMOB_API_URL}/acceptance/void_transactions/${refundData.transactionId}`,
@@ -204,7 +237,7 @@ exports.initiateRefund = asyncHandler(async (refundData, authToken) => {
     console.error("Paymob refund error:", error.response?.data || error.message);
     throw new ApiError("Failed to initiate refund with Paymob", 500);
   }
-});
+};
 
 // ==================== PAYOUTS ====================
 
@@ -212,7 +245,7 @@ exports.initiateRefund = asyncHandler(async (refundData, authToken) => {
  * Authenticate with Paymob Payouts API
  * @returns {Promise<string>} Payouts API access token
  */
-exports.authenticatePayouts = asyncHandler(async () => {
+exports.authenticatePayouts = async () => {
   try {
     const response = await axios.post(
       `${PAYMOB_PAYOUTS_URL}/generate_and_refresh_token/`,
@@ -236,7 +269,7 @@ exports.authenticatePayouts = asyncHandler(async () => {
     console.error("Paymob Payouts authentication error:", error.response?.data || error.message);
     throw new ApiError("Failed to authenticate with Paymob Payouts API", 500);
   }
-});
+};
 
 /**
  * Initiate a payout to a worker
@@ -244,7 +277,7 @@ exports.authenticatePayouts = asyncHandler(async () => {
  * @param {string} accessToken - Payouts API access token
  * @returns {Promise<Object>} Payout response from Paymob
  */
-exports.initiatePayout = asyncHandler(async (payoutData, accessToken) => {
+exports.initiatePayout = async (payoutData, accessToken) => {
   try {
     // Determine issuer based on payout method
     let issuer = "vodafone"; // Default
@@ -273,7 +306,7 @@ exports.initiatePayout = asyncHandler(async (payoutData, accessToken) => {
     }
 
     const response = await axios.post(
-      `${PAYMOB_PAYOUTS_URL}/disburse/`,
+      `${PAYMOB_PAYOUTS_URL}/secure/disburse/`,
       requestBody,
       {
         headers: {
@@ -289,7 +322,7 @@ exports.initiatePayout = asyncHandler(async (payoutData, accessToken) => {
     console.error("Paymob payout error:", error.response?.data || error.message);
     throw new ApiError("Failed to initiate payout with Paymob", 500);
   }
-});
+};
 
 // ==================== TRANSACTION INQUIRY ====================
 
@@ -299,7 +332,7 @@ exports.initiatePayout = asyncHandler(async (payoutData, accessToken) => {
  * @param {string} authToken - Paymob auth token
  * @returns {Promise<Object>} Transaction details
  */
-exports.getTransactionDetails = asyncHandler(async (transactionId, authToken) => {
+exports.getTransactionDetails = async (transactionId, authToken) => {
   try {
     const response = await axios.get(
       `${PAYMOB_API_URL}/acceptance/transactions/${transactionId}`,
@@ -316,7 +349,7 @@ exports.getTransactionDetails = asyncHandler(async (transactionId, authToken) =>
     console.error("Paymob transaction inquiry error:", error.response?.data || error.message);
     throw new ApiError("Failed to retrieve transaction details from Paymob", 500);
   }
-});
+};
 
 // ==================== HELPER FUNCTIONS ====================
 

@@ -1,5 +1,5 @@
 const express = require("express");
-const authMiddleware = require("../middleware/authMiddleware");
+const { protect, allowedTo } = require("../middleware/authMiddleware");
 const workerPayoutService = require("../services/workerPayoutService");
 
 const router = express.Router();
@@ -10,12 +10,12 @@ const router = express.Router();
  */
 router.post(
   "/workers/details",
-  authMiddleware,
+  protect,
+  allowedTo("worker"),
   async (req, res, next) => {
     try {
-      const workerId = req.user._id;
       const result = await workerPayoutService.registerPayoutDetails(
-        workerId,
+        req.user._id,
         req.body
       );
 
@@ -36,11 +36,11 @@ router.post(
  */
 router.get(
   "/workers/details",
-  authMiddleware,
+  protect,
+  allowedTo("worker"),
   async (req, res, next) => {
     try {
-      const workerId = req.user._id;
-      const result = await workerPayoutService.getPayoutDetails(workerId);
+      const result = await workerPayoutService.getPayoutDetails(req.user._id);
 
       res.status(200).json({
         status: "success",
@@ -58,11 +58,14 @@ router.get(
  */
 router.post(
   "/jobs/:jobId/process",
-  authMiddleware,
+  protect,
+  allowedTo("employer", "admin"),
   async (req, res, next) => {
     try {
-      const { jobId } = req.params;
-      const result = await workerPayoutService.processJobPayouts(jobId, req.user);
+      const result = await workerPayoutService.processJobPayouts(
+        req.params.jobId,
+        req.user
+      );
 
       res.status(200).json({
         status: "success",
@@ -81,16 +84,14 @@ router.post(
  */
 router.post(
   "/workers/:workerId/retry",
-  authMiddleware,
+  protect,
+  allowedTo("admin", "employer"),
   async (req, res, next) => {
     try {
-      const { workerId } = req.params;
-      const { jobId, amount } = req.body;
-
       const result = await workerPayoutService.retryWorkerPayout(
-        workerId,
-        jobId,
-        amount
+        req.params.workerId,
+        req.body.jobId,
+        req.user
       );
 
       res.status(200).json({
@@ -110,11 +111,14 @@ router.post(
  */
 router.get(
   "/jobs/:jobId/status",
-  authMiddleware,
+  protect,
+  allowedTo("employer", "worker", "admin"),
   async (req, res, next) => {
     try {
-      const { jobId } = req.params;
-      const result = await workerPayoutService.getPayoutStatus(jobId);
+      const result = await workerPayoutService.getPayoutStatus(
+        req.params.jobId,
+        req.user
+      );
 
       res.status(200).json({
         status: "success",
@@ -125,5 +129,31 @@ router.get(
     }
   }
 );
+
+/**
+ * POST /payouts/webhook
+ * Paymob disbursement callback for asynchronous bank transactions
+ */
+router.post("/webhook", async (req, res, next) => {
+  try {
+    const callbackSecret =
+      req.headers["x-paymob-callback-secret"] || req.query.secret;
+    const result = await workerPayoutService.handlePayoutWebhook(
+      req.body,
+      callbackSecret
+    );
+
+    res.status(200).json({
+      status: "success",
+      message: "Payout webhook processed successfully",
+      data: result,
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({
+      status: "fail",
+      message: error.message,
+    });
+  }
+});
 
 module.exports = router;
