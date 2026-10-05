@@ -17,6 +17,7 @@ process.env.PAYMOB_HMAC_SECRET = "smoke-test-secret";
 const paymobService = require("../services/paymobService");
 const paymentService = require("../services/paymentService");
 const workerPayoutService = require("../services/workerPayoutService");
+const sendEmail = require("../utils/sendEmail");
 const Notification = require("../models/notificationModel");
 const Job = require("../models/jobModel");
 const paymentRoute = require("../routes/paymentRoute");
@@ -151,4 +152,19 @@ test("payout webhook rejects incomplete payload before database access", async (
     workerPayoutService.handlePayoutWebhook({}, undefined),
     (error) => error.statusCode === 400
   );
+});
+
+test("email utility fails safely when Brevo is not configured", async () => {
+  const previousKey = process.env.BREVO_API_KEY;
+  delete process.env.BREVO_API_KEY;
+
+  await assert.rejects(
+    sendEmail({ Email: "test@example.com", subject: "Test", message: "Test" }),
+    (error) =>
+      error.statusCode === 503 &&
+      error.message === "Email service is not configured" &&
+      !error.response
+  );
+
+  if (previousKey) process.env.BREVO_API_KEY = previousKey;
 });

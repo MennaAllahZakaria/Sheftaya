@@ -377,11 +377,16 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
     expiresAt: new Date(Date.now() + OTP_EXPIRY_MS),
   });
 
-  await sendEmail({
-    Email: email,
-    subject: "Password Reset",
-    message: `Your password reset code is ${otp}`,
-  });
+  try {
+    await sendEmail({
+      Email: email,
+      subject: "Password Reset",
+      message: `Your password reset code is ${otp}`,
+    });
+  } catch (error) {
+    await Verification.deleteMany({ email, type: "passwordReset" });
+    throw error;
+  }
 
   res.status(200).json({
     message: "If the email exists, a reset code was sent.",
@@ -408,14 +413,24 @@ exports.resendPasswordResetOtp = asyncHandler(async (req, res) => {
 
   const otp = generateOtp();
 
+  const previousCode = existingVerification.code;
+  const previousExpiresAt = existingVerification.expiresAt;
   existingVerification.code = hashOtp(otp);
   existingVerification.expiresAt = new Date(Date.now() + OTP_EXPIRY_MS);
-  await existingVerification.save();
-  await sendEmail({
+
+  try {
+    await sendEmail({
       Email: email,
       subject: "Resend OTP - Password Reset",
       message: `Your new password reset OTP code is ${otp}`,
     });
+  } catch (error) {
+    existingVerification.code = previousCode;
+    existingVerification.expiresAt = previousExpiresAt;
+    throw error;
+  }
+
+  await existingVerification.save();
 
   existingVerification.resendCount += 1;
   existingVerification.lastSentAt = new Date();
